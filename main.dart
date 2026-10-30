@@ -6,7 +6,6 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-import 'dart:io';
 
 void main() {
   runApp(const MyApp());
@@ -32,7 +31,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1B5E20)),
         appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
       ),
-      builder: (context, child) => Directionality(textDirection: TextDirection.rtl, child: child!),
+      builder: (context, widget) => Directionality(textDirection: TextDirection.rtl, child: widget!),
       home: const HomeScreen(),
     );
   }
@@ -306,7 +305,7 @@ class _StreetsScreenState extends State<StreetsScreen> {
   void _addDialog() {
     final name = TextEditingController();
     final cen = TextEditingController();
-    showDialog(context: context, builder: (ctx) => AlertDialog(
+    showDialog(context: context, builder: (context) => AlertDialog(
       title: const Text('إضافة شارع'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -316,12 +315,12 @@ class _StreetsScreenState extends State<StreetsScreen> {
         ],
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
         ElevatedButton(
           onPressed: () async {
             if (name.text.isNotEmpty) {
               await DBHelper.instance.addStreet(name.text, cen.text);
-              if (mounted) Navigator.pop(ctx);
+              if (mounted) Navigator.pop(context);
               _load();
             }
           },
@@ -396,7 +395,7 @@ class _MetersScreenState extends State<MetersScreen> {
   void _addDialog() {
     final no = TextEditingController();
     final sub = TextEditingController();
-    showDialog(context: context, builder: (ctx) => AlertDialog(
+    showDialog(context: context, builder: (context) => AlertDialog(
       title: const Text('إضافة عداد'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -406,12 +405,12 @@ class _MetersScreenState extends State<MetersScreen> {
         ],
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
         ElevatedButton(
           onPressed: () async {
             if (no.text.isNotEmpty) {
               await DBHelper.instance.addMeter(widget.street.id!, no.text, sub.text);
-              if (mounted) Navigator.pop(ctx);
+              if (mounted) Navigator.pop(context);
               _load();
             }
           },
