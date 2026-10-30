@@ -26,20 +26,18 @@ jobs:
 
       - name: Create Flutter project scaffold
         run: |
-          mkdir -p /tmp/mysrc
-          cp -r lib /tmp/mysrc/ 2>/dev/null || true
-          cp pubspec.yaml /tmp/mysrc/ 2>/dev/null || true
-          
+          # إنشاء مشروع فلاتر مؤقت
           cd /tmp
           flutter create --org com.alasema --project-name electricity_audit temp_app
           
+          # نسخ مجلد android الأساسي إلى مستودعك
           cp -r /tmp/temp_app/android $GITHUB_WORKSPACE/
           cp /tmp/temp_app/.metadata $GITHUB_WORKSPACE/ 2>/dev/null || true
           
+          # نقل ملف main.dart الذي رفعته إلى مجلد lib
           cd $GITHUB_WORKSPACE
-          rm -rf lib
-          cp -r /tmp/mysrc/lib .
-          cp /tmp/mysrc/pubspec.yaml .
+          mkdir -p lib
+          if [ -f "main.dart" ]; then mv main.dart lib/main.dart; fi
 
       - name: Install dependencies
         run: flutter pub get
