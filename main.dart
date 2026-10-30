@@ -33,7 +33,7 @@ class MyApp extends StatelessWidget {
       ),
       builder: (context, child) {
         return Directionality(
-          textDirection: TextDirection.rtl,
+          textDirection: TextDirection.RTL
           child: child ?? const SizedBox(),
         );
       },
