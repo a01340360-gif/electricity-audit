@@ -31,7 +31,12 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1B5E20)),
         appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
       ),
-      builder: (context, widget) => Directionality(textDirection: TextDirection.rtl, child: widget!),
+      builder: (context, child) {
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: child ?? const SizedBox(),
+        );
+      },
       home: const HomeScreen(),
     );
   }
@@ -296,16 +301,18 @@ class _StreetsScreenState extends State<StreetsScreen> {
         },
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => _addDialog(),
+        onPressed: () => _addDialog(context),
         child: const Icon(Icons.add),
       ),
     );
   }
 
-  void _addDialog() {
+  void _addDialog(BuildContext parentContext) {
     final name = TextEditingController();
     final cen = TextEditingController();
-    showDialog(context: context, builder: (context) => AlertDialog(
+    showDialog(
+      context: parentContext, 
+      builder: (BuildContext ctx) => AlertDialog(
       title: const Text('إضافة شارع'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -315,12 +322,12 @@ class _StreetsScreenState extends State<StreetsScreen> {
         ],
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
         ElevatedButton(
           onPressed: () async {
             if (name.text.isNotEmpty) {
               await DBHelper.instance.addStreet(name.text, cen.text);
-              if (mounted) Navigator.pop(context);
+              if (mounted) Navigator.pop(ctx);
               _load();
             }
           },
@@ -384,7 +391,7 @@ class _MetersScreenState extends State<MetersScreen> {
           const SizedBox(height: 12),
           FloatingActionButton(
             heroTag: '2',
-            onPressed: () => _addDialog(),
+            onPressed: () => _addDialog(context),
             child: const Icon(Icons.add),
           ),
         ],
@@ -392,10 +399,12 @@ class _MetersScreenState extends State<MetersScreen> {
     );
   }
 
-  void _addDialog() {
+  void _addDialog(BuildContext parentContext) {
     final no = TextEditingController();
     final sub = TextEditingController();
-    showDialog(context: context, builder: (context) => AlertDialog(
+    showDialog(
+      context: parentContext, 
+      builder: (BuildContext ctx) => AlertDialog(
       title: const Text('إضافة عداد'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -405,12 +414,12 @@ class _MetersScreenState extends State<MetersScreen> {
         ],
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
         ElevatedButton(
           onPressed: () async {
             if (no.text.isNotEmpty) {
               await DBHelper.instance.addMeter(widget.street.id!, no.text, sub.text);
-              if (mounted) Navigator.pop(context);
+              if (mounted) Navigator.pop(ctx);
               _load();
             }
           },
