@@ -26,16 +26,13 @@ jobs:
 
       - name: Prepare Project
         run: |
-          # إنشاء مشروع فلاتر جديد في مجلد مؤقت
           cd /tmp
           flutter create --org com.alasema --project-name electricity_audit temp_app
           
-          # نسخ إعدادات الأندرويد الأساسية إلى مستودعك
           cp -r /tmp/temp_app/android $GITHUB_WORKSPACE/
           cp -r /tmp/temp_app/ios $GITHUB_WORKSPACE/ 2>/dev/null || true
           cp /tmp/temp_app/.metadata $GITHUB_WORKSPACE/ 2>/dev/null || true
           
-          # تجهيز مجلد lib ونقل الكود إليه (سواء كان في الرئيسية أو داخل lib)
           cd $GITHUB_WORKSPACE
           mkdir -p lib
           if [ -f "main.dart" ]; then mv main.dart lib/main.dart; fi
