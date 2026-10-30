@@ -1,0 +1,28 @@
+name: electricity_audit
+description: تطبيق مراجعة وفحص الكهرباء وحساب الفاقد
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  sqflite: ^2.3.0
+  path: ^1.8.3
+  path_provider: ^2.1.1
+  intl: ^0.18.1
+  pdf: ^3.10.7
+  printing: ^5.11.1
+  excel: ^4.0.2
+  share_plus: ^7.2.1
+  provider: ^6.1.1
+
+dev_dependencies:
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
