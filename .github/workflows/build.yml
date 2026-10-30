@@ -21,16 +21,15 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0'
+          flutter-version: '3.27.1'
           channel: 'stable'
 
       - name: Prepare Project
         run: |
           cd /tmp
-          flutter create --org com.alasema --project-name electricity_audit temp_app
+          flutter create --org com.alasema --project-name electricity_audit --platforms android temp_app
           
           cp -r /tmp/temp_app/android $GITHUB_WORKSPACE/
-          cp -r /tmp/temp_app/ios $GITHUB_WORKSPACE/ 2>/dev/null || true
           cp /tmp/temp_app/.metadata $GITHUB_WORKSPACE/ 2>/dev/null || true
           
           cd $GITHUB_WORKSPACE
