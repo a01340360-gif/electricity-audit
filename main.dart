@@ -32,11 +32,11 @@ class MyApp extends StatelessWidget {
         appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
       ),
       builder: (context, child) {
-        return Directionality(
-          textDirection: TextDirection.RTL
-          child: child ?? const SizedBox(),
-        );
-      },
+  return Directionality(
+    textDirection: Directionality.of(context),
+    child: child ?? const SizedBox(),
+  );
+},
       home: const HomeScreen(),
     );
   }
