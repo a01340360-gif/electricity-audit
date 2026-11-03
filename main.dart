@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -98,7 +97,8 @@ class DBHelper {
   }
 
   Future<Database> _initDB() async {
-    final path = join(await getDatabasesPath(), 'elec.db');
+    // تم تعديل السطر هنا لتجنب استيراد مكتبة path
+    final path = '${await getDatabasesPath()}/elec.db';
     return openDatabase(path, version: 1, onCreate: (db, v) async {
       await db.execute('CREATE TABLE streets(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, central_meter TEXT)');
       await db.execute('CREATE TABLE meters(id INTEGER PRIMARY KEY AUTOINCREMENT, street_id INTEGER, meter_no TEXT, subscriber TEXT)');
@@ -107,7 +107,6 @@ class DBHelper {
     });
   }
 
-  // الشوارع
   Future<List<Street>> getStreets() async {
     final d = await db;
     final res = await d.query('streets');
@@ -124,7 +123,6 @@ class DBHelper {
     return d.update('streets', s.toMap(), where: 'id = ?', whereArgs: [s.id]);
   }
 
-  // العدادات
   Future<List<Meter>> getMeters(int streetId) async {
     final d = await db;
     final res = await d.query('meters', where: 'street_id = ?', whereArgs: [streetId]);
@@ -148,7 +146,6 @@ class DBHelper {
     return res.first['reading'] as double;
   }
 
-  // الفحوصات
   Future<Inspection?> getLastInspection(int streetId) async {
     final d = await db;
     final res = await d.query('inspections', where: 'street_id = ?', whereArgs: [streetId], orderBy: 'id DESC', limit: 1);
@@ -317,7 +314,7 @@ class _StreetsScreenState extends State<StreetsScreen> {
                 children: [
                   IconButton(
                     icon: const Icon(Icons.edit, color: Colors.blue),
-                    onPressed: () => _addDialog(existing: s),
+                    onPressed: () => _addDialog(context, existing: s),
                   ),
                   const Icon(Icons.chevron_left),
                 ],
@@ -331,17 +328,17 @@ class _StreetsScreenState extends State<StreetsScreen> {
         },
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => _addDialog(),
+        onPressed: () => _addDialog(context),
         child: const Icon(Icons.add),
       ),
     );
   }
 
-  void _addDialog({Street? existing}) {
+  void _addDialog(BuildContext parentContext, {Street? existing}) {
     final name = TextEditingController(text: existing?.name ?? '');
     final cen = TextEditingController(text: existing?.centralMeter ?? '');
     showDialog(
-      context: context, 
+      context: parentContext, 
       builder: (BuildContext ctx) => AlertDialog(
       title: Text(existing == null ? 'إضافة شارع' : 'تعديل شارع'),
       content: Column(
@@ -361,7 +358,7 @@ class _StreetsScreenState extends State<StreetsScreen> {
               } else {
                 await DBHelper.instance.updateStreet(Street(id: existing.id, name: name.text, centralMeter: cen.text));
               }
-              if (mounted) Navigator.pop(ctx);
+              if (parentContext.mounted) Navigator.pop(ctx);
               _load();
             }
           },
@@ -409,7 +406,7 @@ class _MetersScreenState extends State<MetersScreen> {
                   subtitle: Text(m.subscriber ?? '—'),
                   trailing: IconButton(
                     icon: const Icon(Icons.edit, color: Colors.blue),
-                    onPressed: () => _addDialog(existing: m),
+                    onPressed: () => _addDialog(context, existing: m),
                   ),
                 );
               },
@@ -429,7 +426,7 @@ class _MetersScreenState extends State<MetersScreen> {
           const SizedBox(height: 12),
           FloatingActionButton(
             heroTag: '2',
-            onPressed: () => _addDialog(),
+            onPressed: () => _addDialog(context),
             child: const Icon(Icons.add),
           ),
         ],
@@ -437,11 +434,11 @@ class _MetersScreenState extends State<MetersScreen> {
     );
   }
 
-  void _addDialog({Meter? existing}) {
+  void _addDialog(BuildContext parentContext, {Meter? existing}) {
     final no = TextEditingController(text: existing?.meterNo ?? '');
     final sub = TextEditingController(text: existing?.subscriber ?? '');
     showDialog(
-      context: context, 
+      context: parentContext, 
       builder: (BuildContext ctx) => AlertDialog(
       title: Text(existing == null ? 'إضافة عداد' : 'تعديل عداد'),
       content: Column(
@@ -461,7 +458,7 @@ class _MetersScreenState extends State<MetersScreen> {
               } else {
                 await DBHelper.instance.updateMeter(Meter(id: existing.id, streetId: widget.street.id!, meterNo: no.text, subscriber: sub.text));
               }
-              if (mounted) Navigator.pop(ctx);
+              if (parentContext.mounted) Navigator.pop(ctx);
               _load();
             }
           },
@@ -498,17 +495,14 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   }
 
   void _preload() async {
-    // جلب القراءة المركزية السابقة
     final lastIns = await DBHelper.instance.getLastInspection(widget.street.id!);
     if (lastIns != null) {
       prevCentral = lastIns.central;
     }
 
-    // جلب القراءات السابقة للعدادات
     for (var m in widget.meters) {
       final last = await DBHelper.instance.getLastReading(m.id!);
       previousReads[m.id!] = last ?? 0;
-      // نضع القراءة السابقة كقيمة افتراضية (لأنه إذا لم يقرأ يأخذ نفس السابقة)
       currentReads[m.id!] = TextEditingController(text: Utils.n(last ?? 0));
     }
     setState(() => isLoading = false);
@@ -518,7 +512,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   double get sharedVal => double.tryParse(shared.text) ?? 0;
   double get lightingVal => double.tryParse(lighting.text) ?? 0;
 
-  // حساب الفوارق
   double get centralDiff => currentCentral - prevCentral;
   
   double get totalSubDiffs {
@@ -531,7 +524,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
     return total;
   }
 
-  // الفاقد = فارق المركزي - (فوارق العدادات + أحمال + إنارة)
   double get loss => centralDiff - (totalSubDiffs + sharedVal + lightingVal);
   double get lossPct => centralDiff > 0 ? (loss / centralDiff) * 100 : 0;
 
