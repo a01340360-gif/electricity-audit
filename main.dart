@@ -172,7 +172,6 @@ class DBHelper {
     return res.map(Inspection.fromMap).toList();
   }
 
-  // ================== النسخ الاحتياطي والاستيراد ==================
   Future<String> backupData() async {
     final d = await db;
     final streets = await d.query('streets');
@@ -270,7 +269,10 @@ class _HomeScreenState extends State<HomeScreen> {
       FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.any);
       if (result != null) {
         final file = File(result.files.single.path!);
-        final jsonStr = await file.readAsString();
+        // تم تعديل القراءة هنا لتتجاوز مشاكل ترميز الواتساب
+        final bytes = await file.readAsBytes();
+        final jsonStr = utf8.decode(bytes, allowMalformed: true);
+        
         await DBHelper.instance.restoreData(jsonStr);
         _load();
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم استيراد البيانات بنجاح!')));
