@@ -8,7 +8,7 @@ import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:excel/excel.dart' hide Border; // تم إخفاء Border لحل مشكلة التعارض
+import 'package:excel/excel.dart' hide Border;
 import 'dart:io';
 import 'dart:convert';
 
@@ -61,9 +61,25 @@ class Street {
   final int userId;
   final String name;
   final String? centralMeter;
-  Street({this.id, required this.userId, required this.name, this.centralMeter});
-  Map<String, dynamic> toMap() => {'id': id, 'user_id': userId, 'name': name, 'central_meter': centralMeter};
-  factory Street.fromMap(Map<String, dynamic> m) => Street(id: m['id'], userId: m['user_id'] ?? 1, name: m['name'], centralMeter: m['central_meter']);
+  final double centralPrev; // القراءة المركزية السابقة
+  
+  Street({this.id, required this.userId, required this.name, this.centralMeter, this.centralPrev = 0});
+  
+  Map<String, dynamic> toMap() => {
+    'id': id, 
+    'user_id': userId, 
+    'name': name, 
+    'central_meter': centralMeter,
+    'central_prev': centralPrev
+  };
+  
+  factory Street.fromMap(Map<String, dynamic> m) => Street(
+    id: m['id'], 
+    userId: m['user_id'] ?? 1, 
+    name: m['name'], 
+    centralMeter: m['central_meter'],
+    centralPrev: (m['central_prev'] as num?)?.toDouble() ?? 0.0
+  );
 }
 
 class Meter {
@@ -71,9 +87,25 @@ class Meter {
   final int streetId;
   final String meterNo;
   final String? subscriber;
-  Meter({this.id, required this.streetId, required this.meterNo, this.subscriber});
-  Map<String, dynamic> toMap() => {'id': id, 'street_id': streetId, 'meter_no': meterNo, 'subscriber': subscriber};
-  factory Meter.fromMap(Map<String, dynamic> m) => Meter(id: m['id'], streetId: m['street_id'], meterNo: m['meter_no'], subscriber: m['subscriber']);
+  final double prevReading; // القراءة السابقة للعداد
+  
+  Meter({this.id, required this.streetId, required this.meterNo, this.subscriber, this.prevReading = 0});
+  
+  Map<String, dynamic> toMap() => {
+    'id': id, 
+    'street_id': streetId, 
+    'meter_no': meterNo, 
+    'subscriber': subscriber,
+    'prev_reading': prevReading
+  };
+  
+  factory Meter.fromMap(Map<String, dynamic> m) => Meter(
+    id: m['id'], 
+    streetId: m['street_id'], 
+    meterNo: m['meter_no'], 
+    subscriber: m['subscriber'],
+    prevReading: (m['prev_reading'] as num?)?.toDouble() ?? 0.0
+  );
 }
 
 class Inspection {
@@ -116,11 +148,11 @@ class DBHelper {
     final path = '${await getDatabasesPath()}/elec.db';
     return openDatabase(
       path,
-      version: 2,
+      version: 3, // تحديث الإصدار لدعم الحقول الجديدة
       onCreate: (db, v) async {
         await db.execute('CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)');
-        await db.execute('CREATE TABLE streets(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER DEFAULT 1, name TEXT, central_meter TEXT)');
-        await db.execute('CREATE TABLE meters(id INTEGER PRIMARY KEY AUTOINCREMENT, street_id INTEGER, meter_no TEXT, subscriber TEXT)');
+        await db.execute('CREATE TABLE streets(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER DEFAULT 1, name TEXT, central_meter TEXT, central_prev REAL DEFAULT 0)');
+        await db.execute('CREATE TABLE meters(id INTEGER PRIMARY KEY AUTOINCREMENT, street_id INTEGER, meter_no TEXT, subscriber TEXT, prev_reading REAL DEFAULT 0)');
         await db.execute('CREATE TABLE inspections(id INTEGER PRIMARY KEY AUTOINCREMENT, street_id INTEGER, period_type TEXT, start TEXT, end TEXT, central REAL, sub_total REAL, shared REAL, lighting REAL, loss REAL, loss_percent REAL)');
         await db.execute('CREATE TABLE readings(id INTEGER PRIMARY KEY AUTOINCREMENT, inspection_id INTEGER, meter_id INTEGER, reading REAL)');
         await db.insert('users', {'name': 'المدير'});
@@ -130,6 +162,10 @@ class DBHelper {
           await db.execute('CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)');
           await db.insert('users', {'name': 'المدير'});
           await db.execute('ALTER TABLE streets ADD COLUMN user_id INTEGER DEFAULT 1');
+        }
+        if (oldV < 3) {
+          await db.execute('ALTER TABLE streets ADD COLUMN central_prev REAL DEFAULT 0');
+          await db.execute('ALTER TABLE meters ADD COLUMN prev_reading REAL DEFAULT 0');
         }
       }
     );
@@ -156,9 +192,9 @@ class DBHelper {
     return res.map(Street.fromMap).toList();
   }
   
-  Future<int> addStreet(int userId, String name, String central) async {
+  Future<int> addStreet(int userId, String name, String central, double centralPrev) async {
     final d = await db;
-    return d.insert('streets', {'user_id': userId, 'name': name, 'central_meter': central});
+    return d.insert('streets', {'user_id': userId, 'name': name, 'central_meter': central, 'central_prev': centralPrev});
   }
 
   Future<int> updateStreet(Street s) async {
@@ -172,9 +208,9 @@ class DBHelper {
     return res.map(Meter.fromMap).toList();
   }
 
-  Future<int> addMeter(int streetId, String no, String sub) async {
+  Future<int> addMeter(int streetId, String no, String sub, double prevReading) async {
     final d = await db;
-    return d.insert('meters', {'street_id': streetId, 'meter_no': no, 'subscriber': sub});
+    return d.insert('meters', {'street_id': streetId, 'meter_no': no, 'subscriber': sub, 'prev_reading': prevReading});
   }
 
   Future<int> updateMeter(Meter m) async {
@@ -301,7 +337,6 @@ class _HomeScreenState extends State<HomeScreen> {
     await _loadData();
   }
 
-  // تم تعديل الدالة لترجع Future لحل مشكلة await
   Future<void> _loadData() async {
     if (currentUser == null) return;
     streets = await DBHelper.instance.getStreets(currentUser!.id!);
@@ -514,7 +549,7 @@ class _StreetsScreenState extends State<StreetsScreen> {
             child: ListTile(
               leading: const Icon(Icons.signpost),
               title: Text(s.name),
-              subtitle: Text('عداد مركزي: ${s.centralMeter ?? "—"}'),
+              subtitle: Text('مركزي: ${s.centralMeter ?? "—"} | سابقة: ${Utils.n(s.centralPrev)}'),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -543,26 +578,32 @@ class _StreetsScreenState extends State<StreetsScreen> {
   void _addDialog(BuildContext parentContext, {Street? existing}) {
     final name = TextEditingController(text: existing?.name ?? '');
     final cen = TextEditingController(text: existing?.centralMeter ?? '');
+    final cenPrev = TextEditingController(text: existing != null ? Utils.n(existing.centralPrev) : '0');
+    
     showDialog(
       context: parentContext, 
       builder: (BuildContext ctx) => AlertDialog(
       title: Text(existing == null ? 'إضافة شارع' : 'تعديل شارع'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(controller: name, decoration: const InputDecoration(labelText: 'اسم الشارع')),
-          TextField(controller: cen, decoration: const InputDecoration(labelText: 'رقم العداد المركزي')),
-        ],
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: name, decoration: const InputDecoration(labelText: 'اسم الشارع')),
+            TextField(controller: cen, decoration: const InputDecoration(labelText: 'رقم العداد المركزي')),
+            TextField(controller: cenPrev, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'القراءة المركزية السابقة')),
+          ],
+        ),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
         ElevatedButton(
           onPressed: () async {
             if (name.text.isNotEmpty) {
+              final cPrev = double.tryParse(cenPrev.text) ?? 0;
               if (existing == null) {
-                await DBHelper.instance.addStreet(widget.userId, name.text, cen.text);
+                await DBHelper.instance.addStreet(widget.userId, name.text, cen.text, cPrev);
               } else {
-                await DBHelper.instance.updateStreet(Street(id: existing.id, userId: widget.userId, name: name.text, centralMeter: cen.text));
+                await DBHelper.instance.updateStreet(Street(id: existing.id, userId: widget.userId, name: name.text, centralMeter: cen.text, centralPrev: cPrev));
               }
               if (parentContext.mounted) Navigator.pop(ctx);
               _load();
@@ -609,7 +650,7 @@ class _MetersScreenState extends State<MetersScreen> {
                 return ListTile(
                   leading: const CircleAvatar(child: Icon(Icons.speed)),
                   title: Text('عداد ${m.meterNo}'),
-                  subtitle: Text(m.subscriber ?? '—'),
+                  subtitle: Text('${m.subscriber ?? "—"} | السابقة: ${Utils.n(m.prevReading)}'),
                   trailing: IconButton(
                     icon: const Icon(Icons.edit, color: Colors.blue),
                     onPressed: () => _addDialog(context, existing: m),
@@ -643,26 +684,32 @@ class _MetersScreenState extends State<MetersScreen> {
   void _addDialog(BuildContext parentContext, {Meter? existing}) {
     final no = TextEditingController(text: existing?.meterNo ?? '');
     final sub = TextEditingController(text: existing?.subscriber ?? '');
+    final prev = TextEditingController(text: existing != null ? Utils.n(existing.prevReading) : '0');
+    
     showDialog(
       context: parentContext, 
       builder: (BuildContext ctx) => AlertDialog(
       title: Text(existing == null ? 'إضافة عداد' : 'تعديل عداد'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(controller: no, decoration: const InputDecoration(labelText: 'رقم العداد')),
-          TextField(controller: sub, decoration: const InputDecoration(labelText: 'اسم المشترك')),
-        ],
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: no, decoration: const InputDecoration(labelText: 'رقم العداد')),
+            TextField(controller: sub, decoration: const InputDecoration(labelText: 'اسم المشترك')),
+            TextField(controller: prev, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'القراءة السابقة للعداد')),
+          ],
+        ),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
         ElevatedButton(
           onPressed: () async {
             if (no.text.isNotEmpty) {
+              final pRead = double.tryParse(prev.text) ?? 0;
               if (existing == null) {
-                await DBHelper.instance.addMeter(widget.street.id!, no.text, sub.text);
+                await DBHelper.instance.addMeter(widget.street.id!, no.text, sub.text, pRead);
               } else {
-                await DBHelper.instance.updateMeter(Meter(id: existing.id, streetId: widget.street.id!, meterNo: no.text, subscriber: sub.text));
+                await DBHelper.instance.updateMeter(Meter(id: existing.id, streetId: widget.street.id!, meterNo: no.text, subscriber: sub.text, prevReading: pRead));
               }
               if (parentContext.mounted) Navigator.pop(ctx);
               _load();
@@ -701,15 +748,19 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   }
 
   void _preload() async {
+    // 1. جلب القراءة المركزية: نبحث عن آخر فحص، وإذا لم يوجد نأخذ السابقة من بيانات الشارع
     final lastIns = await DBHelper.instance.getLastInspection(widget.street.id!);
     if (lastIns != null) {
       prevCentral = lastIns.central;
+    } else {
+      prevCentral = widget.street.centralPrev;
     }
 
+    // 2. جلب قراءات العدادات: نبحث عن آخر قراءة، وإذا لم توجد نأخذها من بيانات العداد
     for (var m in widget.meters) {
       final last = await DBHelper.instance.getLastReading(m.id!);
-      previousReads[m.id!] = last ?? 0;
-      currentReads[m.id!] = TextEditingController(text: Utils.n(last ?? 0));
+      previousReads[m.id!] = last ?? m.prevReading;
+      currentReads[m.id!] = TextEditingController(text: Utils.n(previousReads[m.id!]!));
     }
     setState(() => isLoading = false);
   }
