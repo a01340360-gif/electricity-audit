@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:share_plus/share_plus.dart';
 
 void main() {
   runApp(const MyApp());
@@ -32,11 +33,11 @@ class MyApp extends StatelessWidget {
         appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
       ),
       builder: (context, child) {
-  return Directionality(
-    textDirection: Directionality.of(context),
-    child: child ?? const SizedBox(),
-  );
-},
+        return Directionality(
+          textDirection: Directionality.of(context),
+          child: child ?? const SizedBox(),
+        );
+      },
       home: const HomeScreen(),
     );
   }
@@ -106,6 +107,7 @@ class DBHelper {
     });
   }
 
+  // الشوارع
   Future<List<Street>> getStreets() async {
     final d = await db;
     final res = await d.query('streets');
@@ -117,6 +119,12 @@ class DBHelper {
     return d.insert('streets', {'name': name, 'central_meter': central});
   }
 
+  Future<int> updateStreet(Street s) async {
+    final d = await db;
+    return d.update('streets', s.toMap(), where: 'id = ?', whereArgs: [s.id]);
+  }
+
+  // العدادات
   Future<List<Meter>> getMeters(int streetId) async {
     final d = await db;
     final res = await d.query('meters', where: 'street_id = ?', whereArgs: [streetId]);
@@ -128,11 +136,24 @@ class DBHelper {
     return d.insert('meters', {'street_id': streetId, 'meter_no': no, 'subscriber': sub});
   }
 
+  Future<int> updateMeter(Meter m) async {
+    final d = await db;
+    return d.update('meters', m.toMap(), where: 'id = ?', whereArgs: [m.id]);
+  }
+
   Future<double?> getLastReading(int meterId) async {
     final d = await db;
     final res = await d.rawQuery('SELECT reading FROM readings WHERE meter_id = ? ORDER BY id DESC LIMIT 1', [meterId]);
     if (res.isEmpty) return null;
     return res.first['reading'] as double;
+  }
+
+  // الفحوصات
+  Future<Inspection?> getLastInspection(int streetId) async {
+    final d = await db;
+    final res = await d.query('inspections', where: 'street_id = ?', whereArgs: [streetId], orderBy: 'id DESC', limit: 1);
+    if (res.isEmpty) return null;
+    return Inspection.fromMap(res.first);
   }
 
   Future<void> saveInspection(Inspection ins, Map<int, double> readings) async {
@@ -291,7 +312,16 @@ class _StreetsScreenState extends State<StreetsScreen> {
               leading: const Icon(Icons.signpost),
               title: Text(s.name),
               subtitle: Text('عداد مركزي: ${s.centralMeter ?? "—"}'),
-              trailing: const Icon(Icons.chevron_left),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.edit, color: Colors.blue),
+                    onPressed: () => _addDialog(existing: s),
+                  ),
+                  const Icon(Icons.chevron_left),
+                ],
+              ),
               onTap: () async {
                 await Navigator.push(context, MaterialPageRoute(builder: (_) => MetersScreen(street: s)));
                 _load();
@@ -301,19 +331,19 @@ class _StreetsScreenState extends State<StreetsScreen> {
         },
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => _addDialog(context),
+        onPressed: () => _addDialog(),
         child: const Icon(Icons.add),
       ),
     );
   }
 
-  void _addDialog(BuildContext parentContext) {
-    final name = TextEditingController();
-    final cen = TextEditingController();
+  void _addDialog({Street? existing}) {
+    final name = TextEditingController(text: existing?.name ?? '');
+    final cen = TextEditingController(text: existing?.centralMeter ?? '');
     showDialog(
-      context: parentContext, 
+      context: context, 
       builder: (BuildContext ctx) => AlertDialog(
-      title: const Text('إضافة شارع'),
+      title: Text(existing == null ? 'إضافة شارع' : 'تعديل شارع'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -326,7 +356,11 @@ class _StreetsScreenState extends State<StreetsScreen> {
         ElevatedButton(
           onPressed: () async {
             if (name.text.isNotEmpty) {
-              await DBHelper.instance.addStreet(name.text, cen.text);
+              if (existing == null) {
+                await DBHelper.instance.addStreet(name.text, cen.text);
+              } else {
+                await DBHelper.instance.updateStreet(Street(id: existing.id, name: name.text, centralMeter: cen.text));
+              }
               if (mounted) Navigator.pop(ctx);
               _load();
             }
@@ -373,6 +407,10 @@ class _MetersScreenState extends State<MetersScreen> {
                   leading: const CircleAvatar(child: Icon(Icons.speed)),
                   title: Text('عداد ${m.meterNo}'),
                   subtitle: Text(m.subscriber ?? '—'),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.edit, color: Colors.blue),
+                    onPressed: () => _addDialog(existing: m),
+                  ),
                 );
               },
             ),
@@ -391,7 +429,7 @@ class _MetersScreenState extends State<MetersScreen> {
           const SizedBox(height: 12),
           FloatingActionButton(
             heroTag: '2',
-            onPressed: () => _addDialog(context),
+            onPressed: () => _addDialog(),
             child: const Icon(Icons.add),
           ),
         ],
@@ -399,13 +437,13 @@ class _MetersScreenState extends State<MetersScreen> {
     );
   }
 
-  void _addDialog(BuildContext parentContext) {
-    final no = TextEditingController();
-    final sub = TextEditingController();
+  void _addDialog({Meter? existing}) {
+    final no = TextEditingController(text: existing?.meterNo ?? '');
+    final sub = TextEditingController(text: existing?.subscriber ?? '');
     showDialog(
-      context: parentContext, 
+      context: context, 
       builder: (BuildContext ctx) => AlertDialog(
-      title: const Text('إضافة عداد'),
+      title: Text(existing == null ? 'إضافة عداد' : 'تعديل عداد'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -418,7 +456,11 @@ class _MetersScreenState extends State<MetersScreen> {
         ElevatedButton(
           onPressed: () async {
             if (no.text.isNotEmpty) {
-              await DBHelper.instance.addMeter(widget.street.id!, no.text, sub.text);
+              if (existing == null) {
+                await DBHelper.instance.addMeter(widget.street.id!, no.text, sub.text);
+              } else {
+                await DBHelper.instance.updateMeter(Meter(id: existing.id, streetId: widget.street.id!, meterNo: no.text, subscriber: sub.text));
+              }
               if (mounted) Navigator.pop(ctx);
               _load();
             }
@@ -442,7 +484,12 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   final central = TextEditingController(text: '0');
   final shared = TextEditingController(text: '0');
   final lighting = TextEditingController(text: '0');
-  Map<int, TextEditingController> reads = {};
+  
+  Map<int, TextEditingController> currentReads = {};
+  Map<int, double> previousReads = {};
+  
+  double prevCentral = 0;
+  bool isLoading = true;
 
   @override
   void initState() {
@@ -451,25 +498,50 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   }
 
   void _preload() async {
+    // جلب القراءة المركزية السابقة
+    final lastIns = await DBHelper.instance.getLastInspection(widget.street.id!);
+    if (lastIns != null) {
+      prevCentral = lastIns.central;
+    }
+
+    // جلب القراءات السابقة للعدادات
     for (var m in widget.meters) {
       final last = await DBHelper.instance.getLastReading(m.id!);
-      reads[m.id!] = TextEditingController(text: Utils.n(last ?? 0));
+      previousReads[m.id!] = last ?? 0;
+      // نضع القراءة السابقة كقيمة افتراضية (لأنه إذا لم يقرأ يأخذ نفس السابقة)
+      currentReads[m.id!] = TextEditingController(text: Utils.n(last ?? 0));
     }
-    setState(() {});
+    setState(() => isLoading = false);
   }
 
-  double get subTotal => reads.values.fold(0.0, (s, c) => s + (double.tryParse(c.text) ?? 0));
-  double get cVal => double.tryParse(central.text) ?? 0;
-  double get sVal => double.tryParse(shared.text) ?? 0;
-  double get lVal => double.tryParse(lighting.text) ?? 0;
-  double get loss => cVal - (subTotal + sVal + lVal);
-  double get lossPct => cVal > 0 ? (loss / cVal) * 100 : 0;
+  double get currentCentral => double.tryParse(central.text) ?? 0;
+  double get sharedVal => double.tryParse(shared.text) ?? 0;
+  double get lightingVal => double.tryParse(lighting.text) ?? 0;
+
+  // حساب الفوارق
+  double get centralDiff => currentCentral - prevCentral;
+  
+  double get totalSubDiffs {
+    double total = 0;
+    for (var m in widget.meters) {
+      final curr = double.tryParse(currentReads[m.id!]?.text ?? '0') ?? 0;
+      final prev = previousReads[m.id!] ?? 0;
+      total += (curr - prev);
+    }
+    return total;
+  }
+
+  // الفاقد = فارق المركزي - (فوارق العدادات + أحمال + إنارة)
+  double get loss => centralDiff - (totalSubDiffs + sharedVal + lightingVal);
+  double get lossPct => centralDiff > 0 ? (loss / centralDiff) * 100 : 0;
 
   @override
   Widget build(BuildContext context) {
+    if (isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    
     final color = Utils.riskColor(lossPct);
     return Scaffold(
-      appBar: AppBar(title: const Text('فحص جديد')),
+      appBar: AppBar(title: const Text('فحص جديد (فوارق)')),
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: [
@@ -477,10 +549,19 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  TextField(controller: central, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'القراءة المركزية'), onChanged: (_) => setState((){})),
-                  TextField(controller: shared, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'أحمال مشتركة'), onChanged: (_) => setState((){})),
-                  TextField(controller: lighting, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'إنارة'), onChanged: (_) => setState((){})),
+                  Text('القراءة المركزية السابقة: ${Utils.n(prevCentral)}', style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  TextField(controller: central, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'القراءة المركزية الحالية', border: OutlineInputBorder()), onChanged: (_) => setState((){})),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(child: TextField(controller: shared, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'أحمال (للفترة)'), onChanged: (_) => setState((){}))),
+                      const SizedBox(width: 8),
+                      Expanded(child: TextField(controller: lighting, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'إنارة (للفترة)'), onChanged: (_) => setState((){}))),
+                    ],
+                  )
                 ],
               ),
             ),
@@ -492,42 +573,73 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('فارق المركزي:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      Text(Utils.n(centralDiff), style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('مجموع فوارق العدادات:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      Text(Utils.n(totalSubDiffs), style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const Divider(),
                   Text('الحالة: ${Utils.riskName(lossPct)}', style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 18)),
                   const Divider(),
-                  Text('الفاقد: ${Utils.n(loss)}'),
+                  Text('الفاقد: ${Utils.n(loss)}', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: color)),
                   Text('النسبة: ${lossPct.toStringAsFixed(2)}%', style: TextStyle(color: color, fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
           ),
           const SizedBox(height: 12),
-          const Text('قراءات العدادات:', style: TextStyle(fontWeight: FontWeight.bold)),
-          ...widget.meters.map((m) => Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
-              children: [
-                Expanded(child: Text('عداد ${m.meterNo}')),
-                SizedBox(
-                  width: 120,
-                  child: TextField(
-                    controller: reads[m.id!],
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
-                    onChanged: (_) => setState((){}),
-                  ),
+          const Text('القراءات الحالية للعدادات:', style: TextStyle(fontWeight: FontWeight.bold)),
+          ...widget.meters.map((m) {
+            final prev = previousReads[m.id!] ?? 0;
+            return Card(
+              margin: const EdgeInsets.symmetric(vertical: 4),
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('عداد ${m.meterNo}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                          Text(m.subscriber ?? '—', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          Text('السابقة: ${Utils.n(prev)}', style: const TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      flex: 2,
+                      child: TextField(
+                        controller: currentReads[m.id!],
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder(), labelText: 'الحالية'),
+                        onChanged: (_) => setState((){}),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          )),
+              ),
+            );
+          }),
           const SizedBox(height: 24),
           ElevatedButton(
             style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(50)),
             onPressed: () async {
               final ins = Inspection(
                 streetId: widget.street.id!, periodType: 'custom', start: DateTime.now().toString().split(' ')[0], end: DateTime.now().toString().split(' ')[0],
-                central: cVal, subTotal: subTotal, shared: sVal, lighting: lVal, loss: loss, lossPercent: lossPct,
+                central: currentCentral, subTotal: totalSubDiffs, shared: sharedVal, lighting: lightingVal, loss: loss, lossPercent: lossPct,
               );
-              final rMap = {for (var e in reads.entries) e.key: double.tryParse(e.value.text) ?? 0};
+              final rMap = {for (var e in currentReads.entries) e.key: double.tryParse(e.value.text) ?? 0};
               await DBHelper.instance.saveInspection(ins, rMap);
               if (mounted) Navigator.pop(context);
             },
@@ -557,6 +669,23 @@ class _ReportsScreenState extends State<ReportsScreen> {
   void _load() async {
     list = await DBHelper.instance.getInspections();
     setState(() {});
+  }
+
+  void _shareReport(Inspection ins) {
+    final text = '''
+📊 تقرير فحص كهرباء - محطة العاصمة
+📅 التاريخ: ${ins.end}
+----------------------------
+⚡ القراءة المركزية: ${Utils.n(ins.central)}
+🔌 مجموع فوارق العدادات: ${Utils.n(ins.subTotal)}
+🏢 أحمال مشتركة: ${Utils.n(ins.shared)}
+💡 إنارة: ${Utils.n(ins.lighting)}
+----------------------------
+🚨 الفاقد: ${Utils.n(ins.loss)}
+📉 النسبة: ${ins.lossPercent.toStringAsFixed(2)}%
+⚠️ الحالة: ${Utils.riskName(ins.lossPercent)}
+    ''';
+    Share.share(text);
   }
 
   void _exportPdf() async {
@@ -598,7 +727,16 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   child: ListTile(
                     title: Text('الفترة: ${ins.end}'),
                     subtitle: Text('الفاقد: ${Utils.n(ins.loss)} (${ins.lossPercent.toStringAsFixed(1)}%)'),
-                    trailing: Chip(label: Text(Utils.riskName(ins.lossPercent), style: const TextStyle(fontSize: 10, color: Colors.white)), backgroundColor: color),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Chip(label: Text(Utils.riskName(ins.lossPercent), style: const TextStyle(fontSize: 10, color: Colors.white)), backgroundColor: color),
+                        IconButton(
+                          icon: const Icon(Icons.share, color: Colors.blue),
+                          onPressed: () => _shareReport(ins),
+                        ),
+                      ],
+                    ),
                   ),
                 );
               },
