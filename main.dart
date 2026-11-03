@@ -6,6 +6,10 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:file_picker/file_picker.dart';
+import 'dart:io';
+import 'dart:convert';
 
 void main() {
   runApp(const MyApp());
@@ -97,7 +101,6 @@ class DBHelper {
   }
 
   Future<Database> _initDB() async {
-    // تم تعديل السطر هنا لتجنب استيراد مكتبة path
     final path = '${await getDatabasesPath()}/elec.db';
     return openDatabase(path, version: 1, onCreate: (db, v) async {
       await db.execute('CREATE TABLE streets(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, central_meter TEXT)');
@@ -168,6 +171,45 @@ class DBHelper {
     final res = await d.query('inspections', orderBy: 'id DESC');
     return res.map(Inspection.fromMap).toList();
   }
+
+  // ================== النسخ الاحتياطي والاستيراد ==================
+  Future<String> backupData() async {
+    final d = await db;
+    final streets = await d.query('streets');
+    final meters = await d.query('meters');
+    final inspections = await d.query('inspections');
+    final readings = await d.query('readings');
+    return jsonEncode({
+      'streets': streets,
+      'meters': meters,
+      'inspections': inspections,
+      'readings': readings,
+    });
+  }
+
+  Future<void> restoreData(String jsonString) async {
+    final data = jsonDecode(jsonString);
+    final d = await db;
+    await d.transaction((txn) async {
+      await txn.delete('readings');
+      await txn.delete('inspections');
+      await txn.delete('meters');
+      await txn.delete('streets');
+
+      for (var row in data['streets']) {
+        await txn.insert('streets', Map<String, dynamic>.from(row));
+      }
+      for (var row in data['meters']) {
+        await txn.insert('meters', Map<String, dynamic>.from(row));
+      }
+      for (var row in data['inspections']) {
+        await txn.insert('inspections', Map<String, dynamic>.from(row));
+      }
+      for (var row in data['readings']) {
+        await txn.insert('readings', Map<String, dynamic>.from(row));
+      }
+    });
+  }
 }
 
 class Utils {
@@ -209,6 +251,33 @@ class _HomeScreenState extends State<HomeScreen> {
     streets = await DBHelper.instance.getStreets();
     ins = await DBHelper.instance.getInspections();
     setState(() {});
+  }
+
+  void _backup() async {
+    try {
+      final jsonStr = await DBHelper.instance.backupData();
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/elec_backup.json');
+      await file.writeAsString(jsonStr);
+      await Share.shareXFiles([XFile(file.path)], text: 'نسخة احتياطية لتطبيق مراجعة الكهرباء');
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));
+    }
+  }
+
+  void _restore() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.any);
+      if (result != null) {
+        final file = File(result.files.single.path!);
+        final jsonStr = await file.readAsString();
+        await DBHelper.instance.restoreData(jsonStr);
+        _load();
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم استيراد البيانات بنجاح!')));
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل الاستيراد: $e')));
+    }
   }
 
   @override
@@ -254,6 +323,38 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: const Icon(Icons.assessment),
             label: const Text('التقارير والنتائج النهائية'),
           ),
+          const SizedBox(height: 24),
+          const Divider(),
+          const Text('النسخ الاحتياطي (هام جداً قبل التحديث):', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _backup,
+                  icon: const Icon(Icons.cloud_upload),
+                  label: const Text('تصدير نسخة'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _restore,
+                  icon: const Icon(Icons.cloud_download),
+                  label: const Text('استيراد نسخة'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 40),
+          const Center(
+            child: Text(
+              'تمت صناعة هذا البرنامج بواسطة:\nعبدالله الزبيري بمساعدة deepSeek',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold),
+            ),
+          ),
+          const SizedBox(height: 20),
         ],
       ),
     );
@@ -694,6 +795,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
             i.end, Utils.n(i.central), Utils.n(i.subTotal), Utils.n(i.loss), '${i.lossPercent.toStringAsFixed(1)}%', Utils.riskName(i.lossPercent)
           ]).toList(),
         ),
+        pw.SizedBox(height: 20),
+        pw.Text('تمت صناعة هذا البرنامج بواسطة: عبدالله الزبيري بمساعدة deepSeek', style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
       ],
     ));
     await Printing.layoutPdf(onLayout: (f) async => doc.save());
