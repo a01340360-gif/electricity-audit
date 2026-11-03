@@ -116,7 +116,7 @@ class DBHelper {
     final path = '${await getDatabasesPath()}/elec.db';
     return openDatabase(
       path,
-      version: 2, // رقم الإصدار الجديد
+      version: 2,
       onCreate: (db, v) async {
         await db.execute('CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)');
         await db.execute('CREATE TABLE streets(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER DEFAULT 1, name TEXT, central_meter TEXT)');
@@ -127,7 +127,6 @@ class DBHelper {
       },
       onUpgrade: (db, oldV, newV) async {
         if (oldV < 2) {
-          // تحديث قاعدة البيانات القديمة وإضافة المستخدمين
           await db.execute('CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)');
           await db.insert('users', {'name': 'المدير'});
           await db.execute('ALTER TABLE streets ADD COLUMN user_id INTEGER DEFAULT 1');
@@ -136,7 +135,6 @@ class DBHelper {
     );
   }
 
-  // المستخدمين
   Future<List<User>> getUsers() async {
     final d = await db;
     final res = await d.query('users');
@@ -152,7 +150,6 @@ class DBHelper {
     return d.insert('users', {'name': name});
   }
 
-  // الشوارع
   Future<List<Street>> getStreets(int userId) async {
     final d = await db;
     final res = await d.query('streets', where: 'user_id = ?', whereArgs: [userId]);
@@ -169,7 +166,6 @@ class DBHelper {
     return d.update('streets', s.toMap(), where: 'id = ?', whereArgs: [s.id]);
   }
 
-  // العدادات
   Future<List<Meter>> getMeters(int streetId) async {
     final d = await db;
     final res = await d.query('meters', where: 'street_id = ?', whereArgs: [streetId]);
@@ -193,7 +189,6 @@ class DBHelper {
     return res.first['reading'] as double;
   }
 
-  // الفحوصات
   Future<Inspection?> getLastInspection(int streetId) async {
     final d = await db;
     final res = await d.query('inspections', where: 'street_id = ?', whereArgs: [streetId], orderBy: 'id DESC', limit: 1);
@@ -217,7 +212,6 @@ class DBHelper {
     return res.map(Inspection.fromMap).toList();
   }
 
-  // النسخ الاحتياطي والاستيراد
   Future<String> backupData() async {
     final d = await db;
     final users = await d.query('users');
@@ -458,7 +452,7 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 40),
           const Center(
             child: Text(
-              'تمت صناعة هذا البرنامج بواسطة:\nعبدالله الزبيري بمساعدة deepSeek',
+              'تم صناعة هذا البرنامج بواسطة:\nعبدالله الزبيري\nDeepSeek مع Claude\nواشراف\nهيثم الابيض',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold),
             ),
@@ -725,12 +719,10 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
 
   double get centralDiff => currentCentral - prevCentral;
   
-  // إجمالي القراءات السابقة للعدادات
   double get totalPrevReadings {
     return previousReads.values.fold(0.0, (sum, val) => sum + val);
   }
 
-  // إجمالي القراءات الحالية للعدادات
   double get totalCurrentReadings {
     double total = 0;
     for (var m in widget.meters) {
@@ -739,10 +731,8 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
     return total;
   }
 
-  // مجموع الفوارق
   double get totalSubDiffs => totalCurrentReadings - totalPrevReadings;
 
-  // الفاقد التقديري
   double get loss => centralDiff - (totalSubDiffs + sharedVal + lightingVal);
   double get lossPct => centralDiff > 0 ? (loss / centralDiff) * 100 : 0;
 
@@ -756,7 +746,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: [
-          // 1- بطاقة القراءة المركزية السابقة (بلون مختلف)
           Card(
             color: Colors.blue.shade50,
             child: Padding(
@@ -781,7 +770,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      Expanded(child: TextField(controller: shared, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'أحمال مشتركة (للفترة)', onChanged: (_) => setState((){})))),
+                      Expanded(child: TextField(controller: shared, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'أحمال مشتركة (للفترة)'), onChanged: (_) => setState((){}))),
                       const SizedBox(width: 8),
                       Expanded(child: TextField(controller: lighting, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'إنارة (للفترة)'), onChanged: (_) => setState((){}))),
                     ],
@@ -825,10 +814,9 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
               ),
             );
           }),
-          const SizedBox(height: 80), // مساحة للشريط السفلي
+          const SizedBox(height: 80),
         ],
       ),
-      // 2 & 3- شريط سفلي ثابت للمجاميع والحساب التلقائي
       bottomNavigationBar: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
@@ -927,7 +915,6 @@ class _ReportsScreenState extends State<ReportsScreen> {
     Share.share(text);
   }
 
-  // 5- تصدير Excel
   void _exportExcel() async {
     try {
       var excel = Excel.createExcel();
@@ -983,7 +970,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
           ]).toList(),
         ),
         pw.SizedBox(height: 20),
-        pw.Text('تمت صناعة هذا البرنامج بواسطة: عبدالله الزبيري بمساعدة deepSeek', style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
+        pw.Text(
+          'تم صناعة هذا البرنامج بواسطة:\nعبدالله الزبيري\nDeepSeek مع Claude\nواشراف هيثم الابيض', 
+          style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
+          textAlign: pw.TextAlign.center,
+        ),
       ],
     ));
     await Printing.layoutPdf(onLayout: (f) async => doc.save());
