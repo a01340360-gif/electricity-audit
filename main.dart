@@ -8,7 +8,7 @@ import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:excel/excel.dart';
+import 'package:excel/excel.dart' hide Border; // تم إخفاء Border لحل مشكلة التعارض
 import 'dart:io';
 import 'dart:convert';
 
@@ -301,7 +301,8 @@ class _HomeScreenState extends State<HomeScreen> {
     await _loadData();
   }
 
-  void _loadData() async {
+  // تم تعديل الدالة لترجع Future لحل مشكلة await
+  Future<void> _loadData() async {
     if (currentUser == null) return;
     streets = await DBHelper.instance.getStreets(currentUser!.id!);
     ins = await DBHelper.instance.getInspections();
@@ -770,9 +771,23 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      Expanded(child: TextField(controller: shared, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'أحمال مشتركة (للفترة)'), onChanged: (_) => setState((){}))),
+                      Expanded(
+                        child: TextField(
+                          controller: shared, 
+                          keyboardType: TextInputType.number, 
+                          decoration: const InputDecoration(labelText: 'أحمال مشتركة (للفترة)'), 
+                          onChanged: (_) => setState((){}),
+                        ),
+                      ),
                       const SizedBox(width: 8),
-                      Expanded(child: TextField(controller: lighting, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'إنارة (للفترة)'), onChanged: (_) => setState((){}))),
+                      Expanded(
+                        child: TextField(
+                          controller: lighting, 
+                          keyboardType: TextInputType.number, 
+                          decoration: const InputDecoration(labelText: 'إنارة (للفترة)'), 
+                          onChanged: (_) => setState((){}),
+                        ),
+                      ),
                     ],
                   )
                 ],
@@ -821,7 +836,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: Colors.white,
-          boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)],
+          boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10)],
           border: Border(top: BorderSide(color: color, width: 2)),
         ),
         child: Column(
