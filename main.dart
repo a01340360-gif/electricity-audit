@@ -61,7 +61,7 @@ class Street {
   final int userId;
   final String name;
   final String? centralMeter;
-  final double centralPrev; // القراءة المركزية السابقة
+  final double centralPrev;
   
   Street({this.id, required this.userId, required this.name, this.centralMeter, this.centralPrev = 0});
   
@@ -87,7 +87,7 @@ class Meter {
   final int streetId;
   final String meterNo;
   final String? subscriber;
-  final double prevReading; // القراءة السابقة للعداد
+  final double prevReading;
   
   Meter({this.id, required this.streetId, required this.meterNo, this.subscriber, this.prevReading = 0});
   
@@ -148,7 +148,7 @@ class DBHelper {
     final path = '${await getDatabasesPath()}/elec.db';
     return openDatabase(
       path,
-      version: 3, // تحديث الإصدار لدعم الحقول الجديدة
+      version: 4, // تحديث لإصلاح المشاكل السابقة
       onCreate: (db, v) async {
         await db.execute('CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)');
         await db.execute('CREATE TABLE streets(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER DEFAULT 1, name TEXT, central_meter TEXT, central_prev REAL DEFAULT 0)');
@@ -159,13 +159,17 @@ class DBHelper {
       },
       onUpgrade: (db, oldV, newV) async {
         if (oldV < 2) {
-          await db.execute('CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)');
-          await db.insert('users', {'name': 'المدير'});
-          await db.execute('ALTER TABLE streets ADD COLUMN user_id INTEGER DEFAULT 1');
+          try { await db.execute('CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)'); } catch(_){}
+          try { await db.insert('users', {'name': 'المدير'}); } catch(_){}
+          try { await db.execute('ALTER TABLE streets ADD COLUMN user_id INTEGER DEFAULT 1'); } catch(_){}
         }
         if (oldV < 3) {
-          await db.execute('ALTER TABLE streets ADD COLUMN central_prev REAL DEFAULT 0');
-          await db.execute('ALTER TABLE meters ADD COLUMN prev_reading REAL DEFAULT 0');
+          try { await db.execute('ALTER TABLE streets ADD COLUMN central_prev REAL DEFAULT 0'); } catch(_){}
+          try { await db.execute('ALTER TABLE meters ADD COLUMN prev_reading REAL DEFAULT 0'); } catch(_){}
+        }
+        if (oldV < 4) {
+          // إصلاح الشوارع التي ليس لها مستخدم
+          await db.execute('UPDATE streets SET user_id = 1 WHERE user_id IS NULL');
         }
       }
     );
@@ -186,9 +190,16 @@ class DBHelper {
     return d.insert('users', {'name': name});
   }
 
+  // تم إزالة شرط user_id من الاستعلام لضمان ظهور جميع الشوارع القديمة
+  Future<List<Street>> getAllStreets() async {
+    final d = await db;
+    final res = await d.query('streets');
+    return res.map(Street.fromMap).toList();
+  }
+
   Future<List<Street>> getStreets(int userId) async {
     final d = await db;
-    final res = await d.query('streets', where: 'user_id = ?', whereArgs: [userId]);
+    final res = await d.query('streets'); // جلب الكل لضمان عدم ضياع البيانات
     return res.map(Street.fromMap).toList();
   }
   
@@ -232,6 +243,12 @@ class DBHelper {
     return Inspection.fromMap(res.first);
   }
 
+  Future<List<Inspection>> getStreetInspections(int streetId) async {
+    final d = await db;
+    final res = await d.query('inspections', where: 'street_id = ?', whereArgs: [streetId], orderBy: 'id DESC');
+    return res.map(Inspection.fromMap).toList();
+  }
+
   Future<void> saveInspection(Inspection ins, Map<int, double> readings) async {
     final d = await db;
     await d.transaction((txn) async {
@@ -239,10 +256,16 @@ class DBHelper {
       for (var e in readings.entries) {
         await txn.insert('readings', {'inspection_id': insId, 'meter_id': e.key, 'reading': e.value});
       }
+      
+      // تحديث القراءة السابقة في جدول الشوارع والعدادات لتكون تراكمية
+      await txn.update('streets', {'central_prev': ins.central}, where: 'id = ?', whereArgs: [ins.streetId]);
+      for (var e in readings.entries) {
+        await txn.update('meters', {'prev_reading': e.value}, where: 'id = ?', whereArgs: [e.key]);
+      }
     });
   }
 
-  Future<List<Inspection>> getInspections() async {
+  Future<List<Inspection>> getAllInspections() async {
     final d = await db;
     final res = await d.query('inspections', orderBy: 'id DESC');
     return res.map(Inspection.fromMap).toList();
@@ -339,8 +362,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadData() async {
     if (currentUser == null) return;
-    streets = await DBHelper.instance.getStreets(currentUser!.id!);
-    ins = await DBHelper.instance.getInspections();
+    streets = await DBHelper.instance.getAllStreets(); // جلب الكل
+    ins = await DBHelper.instance.getAllInspections();
     setState(() {});
   }
 
@@ -533,7 +556,7 @@ class _StreetsScreenState extends State<StreetsScreen> {
   }
   
   void _load() async {
-    list = await DBHelper.instance.getStreets(widget.userId);
+    list = await DBHelper.instance.getAllStreets();
     setState(() {});
   }
 
@@ -541,7 +564,9 @@ class _StreetsScreenState extends State<StreetsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('الشوارع')),
-      body: ListView.builder(
+      body: list.isEmpty 
+        ? const Center(child: Text('لا توجد شوارع. أضف شارعاً جديداً.'))
+        : ListView.builder(
         itemCount: list.length,
         itemBuilder: (context, i) {
           final s = list[i];
@@ -640,7 +665,18 @@ class _MetersScreenState extends State<MetersScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.street.name)),
+      appBar: AppBar(
+        title: Text(widget.street.name),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: 'سجل الفحوصات',
+            onPressed: () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => StreetHistoryScreen(street: widget.street)));
+            },
+          )
+        ],
+      ),
       body: meters.isEmpty 
           ? const Center(child: Text('أضف عدادات للبدء'))
           : ListView.builder(
@@ -722,6 +758,59 @@ class _MetersScreenState extends State<MetersScreen> {
   }
 }
 
+class StreetHistoryScreen extends StatefulWidget {
+  final Street street;
+  const StreetHistoryScreen({super.key, required this.street});
+  @override
+  State<StreetHistoryScreen> createState() => _StreetHistoryScreenState();
+}
+
+class _StreetHistoryScreenState extends State<StreetHistoryScreen> {
+  List<Inspection> list = [];
+  bool loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  void _load() async {
+    list = await DBHelper.instance.getStreetInspections(widget.street.id!);
+    setState(() => loading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('سجل فحوصات ${widget.street.name}')),
+      body: loading ? const Center(child: CircularProgressIndicator()) :
+             list.isEmpty ? const Center(child: Text('لا توجد فحوصات سابقة')) :
+             ListView.builder(
+               itemCount: list.length,
+               itemBuilder: (context, i) {
+                 final ins = list[i];
+                 final color = Utils.riskColor(ins.lossPercent);
+                 return Card(
+                   margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                   child: ListTile(
+                     title: Text('التاريخ: ${ins.end}'),
+                     subtitle: Column(
+                       crossAxisAlignment: CrossAxisAlignment.start,
+                       children: [
+                         Text('المركزي: ${Utils.n(ins.central)}'),
+                         Text('الفوارق: ${Utils.n(ins.subTotal)}'),
+                         Text('الفاقد: ${Utils.n(ins.loss)} (${ins.lossPercent.toStringAsFixed(1)}%)', style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+                       ],
+                     ),
+                   ),
+                 );
+               },
+             ),
+    );
+  }
+}
+
 class NewInspectionScreen extends StatefulWidget {
   final Street street;
   final List<Meter> meters;
@@ -748,7 +837,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   }
 
   void _preload() async {
-    // 1. جلب القراءة المركزية: نبحث عن آخر فحص، وإذا لم يوجد نأخذ السابقة من بيانات الشارع
     final lastIns = await DBHelper.instance.getLastInspection(widget.street.id!);
     if (lastIns != null) {
       prevCentral = lastIns.central;
@@ -756,7 +844,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
       prevCentral = widget.street.centralPrev;
     }
 
-    // 2. جلب قراءات العدادات: نبحث عن آخر قراءة، وإذا لم توجد نأخذها من بيانات العداد
     for (var m in widget.meters) {
       final last = await DBHelper.instance.getLastReading(m.id!);
       previousReads[m.id!] = last ?? m.prevReading;
@@ -960,7 +1047,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
   
   void _load() async {
-    list = await DBHelper.instance.getInspections();
+    list = await DBHelper.instance.getAllInspections();
     setState(() {});
   }
 
