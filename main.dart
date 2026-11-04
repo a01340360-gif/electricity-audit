@@ -1018,7 +1018,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
     final color = Utils.riskColor(lossPct);
     final dateStr = DateFormat('yyyy-MM-dd').format(selectedDate);
     
-    // التحقق من صحة البيانات
     bool isCentralValid = currentCentral >= prevCentral;
     
     return Scaffold(
@@ -1181,7 +1180,8 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text('الفرق (المحسوب):', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
-                Text(Utils.n(totalSubDiffs), style: const TextStyle(fontWeight: FontWeight.bold, color: totalSubDiffs >= 0 ? Colors.blue : Colors.red)),
+                // تم إزالة كلمة const من هنا
+                Text(Utils.n(totalSubDiffs), style: TextStyle(fontWeight: FontWeight.bold, color: totalSubDiffs >= 0 ? Colors.blue : Colors.red)),
               ],
             ),
             const SizedBox(height: 8),
@@ -1206,7 +1206,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                 final rMap = {for (var e in currentReads.entries) e.key: double.tryParse(e.value.text) ?? 0};
                 await DBHelper.instance.saveInspection(ins, rMap);
                 if (mounted) Navigator.pop(context);
-              } : null, // الزر معطل إذا كانت القراءة أقل من السابقة
+              } : null,
               child: Text(isCentralValid ? 'حفظ الفحص' : 'تحقق من القراءات (سالب)', style: const TextStyle(color: Colors.white, fontSize: 16)),
             ),
           ],
