@@ -300,14 +300,16 @@ class Utils {
   static String n(num v) => fmt.format(v);
   
   static Color riskColor(double p) {
-    if (p >= 100) return const Color(0xFFB71C1C); // أحمر قاتم جداً (خطر شديد)
-    if (p > 35) return Colors.red;                // أحمر (خطر/سرقة)
-    if (p > 20) return Colors.orange;             // برتقالي (مشكوك)
-    if (p > 10) return Colors.amber;              // أصفر (تحذير)
-    return Colors.green;                          // أخضر (طبيعي)
+    if (p < 0) return Colors.grey;                // رمادي (بيانات خاطئة)
+    if (p >= 100) return const Color(0xFFB71C1C); // أحمر قاتم جداً
+    if (p > 35) return Colors.red;                
+    if (p > 20) return Colors.orange;             
+    if (p > 10) return Colors.amber;              
+    return Colors.green;                          
   }
   
   static String riskName(double p) {
+    if (p < 0) return 'قراءات غير منطقية (سالب)';
     if (p >= 100) return 'خطر شديد جداً (تلاعب)';
     if (p > 35) return 'خطر (سرقة محتملة)';
     if (p > 20) return 'مشكوك';
@@ -1016,6 +1018,9 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
     final color = Utils.riskColor(lossPct);
     final dateStr = DateFormat('yyyy-MM-dd').format(selectedDate);
     
+    // التحقق من صحة البيانات
+    bool isCentralValid = currentCentral >= prevCentral;
+    
     return Scaffold(
       appBar: AppBar(title: const Text('فحص جديد (فوارق)')),
       body: ListView(
@@ -1055,7 +1060,11 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                     controller: central, 
                     keyboardType: TextInputType.number, 
                     textInputAction: TextInputAction.next,
-                    decoration: const InputDecoration(labelText: 'القراءة المركزية الحالية', border: OutlineInputBorder()), 
+                    decoration: InputDecoration(
+                      labelText: 'القراءة المركزية الحالية (الكلي)', 
+                      border: const OutlineInputBorder(),
+                      errorText: !isCentralValid ? 'القراءة الحالية أقل من السابقة!' : null,
+                    ), 
                     onChanged: (_) => setState((){})
                   ),
                   const SizedBox(height: 8),
@@ -1091,6 +1100,10 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
           ...List.generate(widget.meters.length, (index) {
             final m = widget.meters[index];
             final prev = previousReads[m.id!] ?? 0;
+            final currentStr = currentReads[m.id!]?.text ?? '0';
+            final currentVal = double.tryParse(currentStr) ?? 0;
+            bool isSubValid = currentVal >= prev;
+            
             return Card(
               margin: const EdgeInsets.symmetric(vertical: 4),
               child: Padding(
@@ -1122,7 +1135,12 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                             FocusScope.of(context).unfocus();
                           }
                         },
-                        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder(), labelText: 'الحالية'),
+                        decoration: InputDecoration(
+                          isDense: true, 
+                          border: const OutlineInputBorder(), 
+                          labelText: 'الحالية',
+                          errorText: !isSubValid ? 'أقل من السابقة' : null,
+                        ),
                         onChanged: (_) => setState((){}),
                       ),
                     ),
@@ -1163,7 +1181,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text('الفرق (المحسوب):', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
-                Text(Utils.n(totalSubDiffs), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+                Text(Utils.n(totalSubDiffs), style: const TextStyle(fontWeight: FontWeight.bold, color: totalSubDiffs >= 0 ? Colors.blue : Colors.red)),
               ],
             ),
             const SizedBox(height: 8),
@@ -1176,8 +1194,11 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
             ),
             const SizedBox(height: 8),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(45), backgroundColor: color),
-              onPressed: () async {
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size.fromHeight(45), 
+                backgroundColor: isCentralValid ? color : Colors.grey
+              ),
+              onPressed: isCentralValid ? () async {
                 final ins = Inspection(
                   streetId: widget.street.id!, periodType: 'custom', start: dateStr, end: dateStr,
                   central: currentCentral, subTotal: totalSubDiffs, shared: sharedVal, lighting: lightingVal, loss: loss, lossPercent: lossPct,
@@ -1185,8 +1206,8 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                 final rMap = {for (var e in currentReads.entries) e.key: double.tryParse(e.value.text) ?? 0};
                 await DBHelper.instance.saveInspection(ins, rMap);
                 if (mounted) Navigator.pop(context);
-              },
-              child: const Text('حفظ الفحص', style: TextStyle(color: Colors.white, fontSize: 16)),
+              } : null, // الزر معطل إذا كانت القراءة أقل من السابقة
+              child: Text(isCentralValid ? 'حفظ الفحص' : 'تحقق من القراءات (سالب)', style: const TextStyle(color: Colors.white, fontSize: 16)),
             ),
           ],
         ),
