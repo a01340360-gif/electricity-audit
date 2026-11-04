@@ -148,7 +148,7 @@ class DBHelper {
     final path = '${await getDatabasesPath()}/elec.db';
     return openDatabase(
       path,
-      version: 4, // تحديث لإصلاح المشاكل السابقة
+      version: 4, 
       onCreate: (db, v) async {
         await db.execute('CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)');
         await db.execute('CREATE TABLE streets(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER DEFAULT 1, name TEXT, central_meter TEXT, central_prev REAL DEFAULT 0)');
@@ -168,7 +168,6 @@ class DBHelper {
           try { await db.execute('ALTER TABLE meters ADD COLUMN prev_reading REAL DEFAULT 0'); } catch(_){}
         }
         if (oldV < 4) {
-          // إصلاح الشوارع التي ليس لها مستخدم
           await db.execute('UPDATE streets SET user_id = 1 WHERE user_id IS NULL');
         }
       }
@@ -190,19 +189,12 @@ class DBHelper {
     return d.insert('users', {'name': name});
   }
 
-  // تم إزالة شرط user_id من الاستعلام لضمان ظهور جميع الشوارع القديمة
   Future<List<Street>> getAllStreets() async {
     final d = await db;
     final res = await d.query('streets');
     return res.map(Street.fromMap).toList();
   }
 
-  Future<List<Street>> getStreets(int userId) async {
-    final d = await db;
-    final res = await d.query('streets'); // جلب الكل لضمان عدم ضياع البيانات
-    return res.map(Street.fromMap).toList();
-  }
-  
   Future<int> addStreet(int userId, String name, String central, double centralPrev) async {
     final d = await db;
     return d.insert('streets', {'user_id': userId, 'name': name, 'central_meter': central, 'central_prev': centralPrev});
@@ -215,7 +207,7 @@ class DBHelper {
 
   Future<List<Meter>> getMeters(int streetId) async {
     final d = await db;
-    final res = await d.query('meters', where: 'street_id = ?', whereArgs: [streetId]);
+    final res = await d.query('meters', where: 'street_id = ?', whereArgs: [streetId], orderBy: 'id ASC');
     return res.map(Meter.fromMap).toList();
   }
 
@@ -257,7 +249,6 @@ class DBHelper {
         await txn.insert('readings', {'inspection_id': insId, 'meter_id': e.key, 'reading': e.value});
       }
       
-      // تحديث القراءة السابقة في جدول الشوارع والعدادات لتكون تراكمية
       await txn.update('streets', {'central_prev': ins.central}, where: 'id = ?', whereArgs: [ins.streetId]);
       for (var e in readings.entries) {
         await txn.update('meters', {'prev_reading': e.value}, where: 'id = ?', whereArgs: [e.key]);
@@ -362,7 +353,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadData() async {
     if (currentUser == null) return;
-    streets = await DBHelper.instance.getAllStreets(); // جلب الكل
+    streets = await DBHelper.instance.getAllStreets();
     ins = await DBHelper.instance.getAllInspections();
     setState(() {});
   }
@@ -717,10 +708,11 @@ class _MetersScreenState extends State<MetersScreen> {
     );
   }
 
+  // الترقيم التلقائي للعداد
   void _addDialog(BuildContext parentContext, {Meter? existing}) {
-    final no = TextEditingController(text: existing?.meterNo ?? '');
     final sub = TextEditingController(text: existing?.subscriber ?? '');
     final prev = TextEditingController(text: existing != null ? Utils.n(existing.prevReading) : '0');
+    final autoNo = existing?.meterNo ?? '${meters.length + 1}'; // الترقيم التلقائي
     
     showDialog(
       context: parentContext, 
@@ -730,7 +722,11 @@ class _MetersScreenState extends State<MetersScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(controller: no, decoration: const InputDecoration(labelText: 'رقم العداد')),
+            TextField(
+              controller: TextEditingController(text: autoNo),
+              readOnly: true,
+              decoration: const InputDecoration(labelText: 'رقم العداد (تلقائي)', filled: true, fillColor: Color(0xFFF0F0F0)),
+            ),
             TextField(controller: sub, decoration: const InputDecoration(labelText: 'اسم المشترك')),
             TextField(controller: prev, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'القراءة السابقة للعداد')),
           ],
@@ -740,16 +736,14 @@ class _MetersScreenState extends State<MetersScreen> {
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
         ElevatedButton(
           onPressed: () async {
-            if (no.text.isNotEmpty) {
-              final pRead = double.tryParse(prev.text) ?? 0;
-              if (existing == null) {
-                await DBHelper.instance.addMeter(widget.street.id!, no.text, sub.text, pRead);
-              } else {
-                await DBHelper.instance.updateMeter(Meter(id: existing.id, streetId: widget.street.id!, meterNo: no.text, subscriber: sub.text, prevReading: pRead));
-              }
-              if (parentContext.mounted) Navigator.pop(ctx);
-              _load();
+            final pRead = double.tryParse(prev.text) ?? 0;
+            if (existing == null) {
+              await DBHelper.instance.addMeter(widget.street.id!, autoNo, sub.text, pRead);
+            } else {
+              await DBHelper.instance.updateMeter(Meter(id: existing.id, streetId: widget.street.id!, meterNo: autoNo, subscriber: sub.text, prevReading: pRead));
             }
+            if (parentContext.mounted) Navigator.pop(ctx);
+            _load();
           },
           child: const Text('حفظ'),
         ),
@@ -826,6 +820,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   
   Map<int, TextEditingController> currentReads = {};
   Map<int, double> previousReads = {};
+  List<FocusNode> _focusNodes = []; // للتنقل بالكيبورد
   
   double prevCentral = 0;
   bool isLoading = true;
@@ -834,6 +829,14 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   void initState() {
     super.initState();
     _preload();
+  }
+
+  @override
+  void dispose() {
+    for (var node in _focusNodes) {
+      node.dispose();
+    }
+    super.dispose();
   }
 
   void _preload() async {
@@ -848,6 +851,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
       final last = await DBHelper.instance.getLastReading(m.id!);
       previousReads[m.id!] = last ?? m.prevReading;
       currentReads[m.id!] = TextEditingController(text: Utils.n(previousReads[m.id!]!));
+      _focusNodes.add(FocusNode()); // إضافة نقطة تركيز لكل عداد
     }
     setState(() => isLoading = false);
   }
@@ -905,7 +909,13 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  TextField(controller: central, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'القراءة المركزية الحالية', border: OutlineInputBorder()), onChanged: (_) => setState((){})),
+                  TextField(
+                    controller: central, 
+                    keyboardType: TextInputType.number, 
+                    textInputAction: TextInputAction.next,
+                    decoration: const InputDecoration(labelText: 'القراءة المركزية الحالية', border: OutlineInputBorder()), 
+                    onChanged: (_) => setState((){})
+                  ),
                   const SizedBox(height: 8),
                   Row(
                     children: [
@@ -913,6 +923,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                         child: TextField(
                           controller: shared, 
                           keyboardType: TextInputType.number, 
+                          textInputAction: TextInputAction.next,
                           decoration: const InputDecoration(labelText: 'أحمال مشتركة (للفترة)'), 
                           onChanged: (_) => setState((){}),
                         ),
@@ -922,6 +933,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                         child: TextField(
                           controller: lighting, 
                           keyboardType: TextInputType.number, 
+                          textInputAction: TextInputAction.next,
                           decoration: const InputDecoration(labelText: 'إنارة (للفترة)'), 
                           onChanged: (_) => setState((){}),
                         ),
@@ -934,7 +946,9 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
           ),
           const SizedBox(height: 12),
           const Text('القراءات الحالية للعدادات:', style: TextStyle(fontWeight: FontWeight.bold)),
-          ...widget.meters.map((m) {
+          // استخدام List.generate للتنقل بالكيبورد
+          ...List.generate(widget.meters.length, (index) {
+            final m = widget.meters[index];
             final prev = previousReads[m.id!] ?? 0;
             return Card(
               margin: const EdgeInsets.symmetric(vertical: 4),
@@ -957,7 +971,16 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                       flex: 2,
                       child: TextField(
                         controller: currentReads[m.id!],
+                        focusNode: _focusNodes[index],
                         keyboardType: TextInputType.number,
+                        textInputAction: index == widget.meters.length - 1 ? TextInputAction.done : TextInputAction.next,
+                        onSubmitted: (_) {
+                          if (index < widget.meters.length - 1) {
+                            FocusScope.of(context).requestFocus(_focusNodes[index + 1]);
+                          } else {
+                            FocusScope.of(context).unfocus();
+                          }
+                        },
                         decoration: const InputDecoration(isDense: true, border: OutlineInputBorder(), labelText: 'الحالية'),
                         onChanged: (_) => setState((){}),
                       ),
