@@ -66,18 +66,11 @@ class Street {
   Street({this.id, required this.userId, required this.name, this.centralMeter, this.centralPrev = 0});
   
   Map<String, dynamic> toMap() => {
-    'id': id, 
-    'user_id': userId, 
-    'name': name, 
-    'central_meter': centralMeter,
-    'central_prev': centralPrev
+    'id': id, 'user_id': userId, 'name': name, 'central_meter': centralMeter, 'central_prev': centralPrev
   };
   
   factory Street.fromMap(Map<String, dynamic> m) => Street(
-    id: m['id'], 
-    userId: m['user_id'] ?? 1, 
-    name: m['name'], 
-    centralMeter: m['central_meter'],
+    id: m['id'], userId: m['user_id'] ?? 1, name: m['name'], centralMeter: m['central_meter'],
     centralPrev: (m['central_prev'] as num?)?.toDouble() ?? 0.0
   );
 }
@@ -92,18 +85,11 @@ class Meter {
   Meter({this.id, required this.streetId, required this.meterNo, this.subscriber, this.prevReading = 0});
   
   Map<String, dynamic> toMap() => {
-    'id': id, 
-    'street_id': streetId, 
-    'meter_no': meterNo, 
-    'subscriber': subscriber,
-    'prev_reading': prevReading
+    'id': id, 'street_id': streetId, 'meter_no': meterNo, 'subscriber': subscriber, 'prev_reading': prevReading
   };
   
   factory Meter.fromMap(Map<String, dynamic> m) => Meter(
-    id: m['id'], 
-    streetId: m['street_id'], 
-    meterNo: m['meter_no'], 
-    subscriber: m['subscriber'],
+    id: m['id'], streetId: m['street_id'], meterNo: m['meter_no'], subscriber: m['subscriber'],
     prevReading: (m['prev_reading'] as num?)?.toDouble() ?? 0.0
   );
 }
@@ -205,6 +191,11 @@ class DBHelper {
     return d.update('streets', s.toMap(), where: 'id = ?', whereArgs: [s.id]);
   }
 
+  Future<int> deleteStreet(int id) async {
+    final d = await db;
+    return d.delete('streets', where: 'id = ?', whereArgs: [id]);
+  }
+
   Future<List<Meter>> getMeters(int streetId) async {
     final d = await db;
     final res = await d.query('meters', where: 'street_id = ?', whereArgs: [streetId], orderBy: 'id ASC');
@@ -219,6 +210,11 @@ class DBHelper {
   Future<int> updateMeter(Meter m) async {
     final d = await db;
     return d.update('meters', m.toMap(), where: 'id = ?', whereArgs: [m.id]);
+  }
+
+  Future<int> deleteMeter(int id) async {
+    final d = await db;
+    return d.delete('meters', where: 'id = ?', whereArgs: [id]);
   }
 
   Future<double?> getLastReading(int meterId) async {
@@ -239,6 +235,11 @@ class DBHelper {
     final d = await db;
     final res = await d.query('inspections', where: 'street_id = ?', whereArgs: [streetId], orderBy: 'id DESC');
     return res.map(Inspection.fromMap).toList();
+  }
+
+  Future<int> deleteInspection(int id) async {
+    final d = await db;
+    return d.delete('inspections', where: 'id = ?', whereArgs: [id]);
   }
 
   Future<void> saveInspection(Inspection ins, Map<int, double> readings) async {
@@ -270,11 +271,7 @@ class DBHelper {
     final inspections = await d.query('inspections');
     final readings = await d.query('readings');
     return jsonEncode({
-      'users': users,
-      'streets': streets,
-      'meters': meters,
-      'inspections': inspections,
-      'readings': readings,
+      'users': users, 'streets': streets, 'meters': meters, 'inspections': inspections, 'readings': readings,
     });
   }
 
@@ -288,37 +285,30 @@ class DBHelper {
       await txn.delete('streets');
       await txn.delete('users');
 
-      for (var row in data['users'] ?? []) {
-        await txn.insert('users', Map<String, dynamic>.from(row));
-      }
-      for (var row in data['streets']) {
-        await txn.insert('streets', Map<String, dynamic>.from(row));
-      }
-      for (var row in data['meters']) {
-        await txn.insert('meters', Map<String, dynamic>.from(row));
-      }
-      for (var row in data['inspections']) {
-        await txn.insert('inspections', Map<String, dynamic>.from(row));
-      }
-      for (var row in data['readings']) {
-        await txn.insert('readings', Map<String, dynamic>.from(row));
-      }
+      for (var row in data['users'] ?? []) { await txn.insert('users', Map<String, dynamic>.from(row)); }
+      for (var row in data['streets']) { await txn.insert('streets', Map<String, dynamic>.from(row)); }
+      for (var row in data['meters']) { await txn.insert('meters', Map<String, dynamic>.from(row)); }
+      for (var row in data['inspections']) { await txn.insert('inspections', Map<String, dynamic>.from(row)); }
+      for (var row in data['readings']) { await txn.insert('readings', Map<String, dynamic>.from(row)); }
     });
   }
 }
 
+// ================== دوال التلوين والتسمية ==================
 class Utils {
   static final fmt = NumberFormat('#,##0.##', 'en');
   static String n(num v) => fmt.format(v);
   
   static Color riskColor(double p) {
-    if (p > 35) return Colors.red;
-    if (p > 20) return Colors.orange;
-    if (p > 10) return Colors.amber;
-    return Colors.green;
+    if (p >= 100) return const Color(0xFFB71C1C); // أحمر قاتم جداً (خطر شديد)
+    if (p > 35) return Colors.red;                // أحمر (خطر/سرقة)
+    if (p > 20) return Colors.orange;             // برتقالي (مشكوك)
+    if (p > 10) return Colors.amber;              // أصفر (تحذير)
+    return Colors.green;                          // أخضر (طبيعي)
   }
   
   static String riskName(double p) {
+    if (p >= 100) return 'خطر شديد جداً (تلاعب)';
     if (p > 35) return 'خطر (سرقة محتملة)';
     if (p > 20) return 'مشكوك';
     if (p > 10) return 'تحذير';
@@ -359,9 +349,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _switchUser(User user) {
-    setState(() {
-      currentUser = user;
-    });
+    setState(() { currentUser = user; });
     _loadData();
   }
 
@@ -539,6 +527,8 @@ class StreetsScreen extends StatefulWidget {
 
 class _StreetsScreenState extends State<StreetsScreen> {
   List<Street> list = [];
+  List<Street> filtered = [];
+  final searchCtrl = TextEditingController();
   
   @override
   void initState() {
@@ -548,46 +538,93 @@ class _StreetsScreenState extends State<StreetsScreen> {
   
   void _load() async {
     list = await DBHelper.instance.getAllStreets();
+    filtered = list;
     setState(() {});
+  }
+
+  void _search(String query) {
+    setState(() {
+      filtered = list.where((s) => s.name.contains(query) || (s.centralMeter ?? '').contains(query)).toList();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('الشوارع')),
-      body: list.isEmpty 
-        ? const Center(child: Text('لا توجد شوارع. أضف شارعاً جديداً.'))
-        : ListView.builder(
-        itemCount: list.length,
-        itemBuilder: (context, i) {
-          final s = list[i];
-          return Card(
-            child: ListTile(
-              leading: const Icon(Icons.signpost),
-              title: Text(s.name),
-              subtitle: Text('مركزي: ${s.centralMeter ?? "—"} | سابقة: ${Utils.n(s.centralPrev)}'),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.edit, color: Colors.blue),
-                    onPressed: () => _addDialog(context, existing: s),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: TextField(
+              controller: searchCtrl,
+              decoration: const InputDecoration(labelText: 'بحث عن شارع...', prefixIcon: Icon(Icons.search), border: OutlineInputBorder()),
+              onChanged: _search,
+            ),
+          ),
+          Expanded(
+            child: filtered.isEmpty 
+              ? const Center(child: Text('لا توجد شوارع مطابقة أو مضافة.'))
+              : ListView.builder(
+              itemCount: filtered.length,
+              itemBuilder: (context, i) {
+                final s = filtered[i];
+                return Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.signpost),
+                    title: Text(s.name),
+                    subtitle: Text('مركزي: ${s.centralMeter ?? "—"} | سابقة: ${Utils.n(s.centralPrev)}'),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.edit, color: Colors.blue),
+                          onPressed: () => _addDialog(context, existing: s),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () => _deleteDialog(context, s),
+                        ),
+                        const Icon(Icons.chevron_left),
+                      ],
+                    ),
+                    onTap: () async {
+                      await Navigator.push(context, MaterialPageRoute(builder: (_) => MetersScreen(street: s)));
+                      _load();
+                    },
                   ),
-                  const Icon(Icons.chevron_left),
-                ],
-              ),
-              onTap: () async {
-                await Navigator.push(context, MaterialPageRoute(builder: (_) => MetersScreen(street: s)));
-                _load();
+                );
               },
             ),
-          );
-        },
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _addDialog(context),
         child: const Icon(Icons.add),
       ),
+    );
+  }
+
+  void _deleteDialog(BuildContext parentContext, Street s) {
+    showDialog(
+      context: parentContext,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تأكيد الحذف'),
+        content: Text('هل أنت متأكد من حذف الشارع "${s.name}"؟ سيتم حذف جميع عداداته وفحوصاته أيضاً.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              await DBHelper.instance.deleteStreet(s.id!);
+              if (parentContext.mounted) Navigator.pop(ctx);
+              _load();
+            },
+            child: const Text('حذف', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      )
     );
   }
 
@@ -641,6 +678,8 @@ class MetersScreen extends StatefulWidget {
 
 class _MetersScreenState extends State<MetersScreen> {
   List<Meter> meters = [];
+  List<Meter> filtered = [];
+  final searchCtrl = TextEditingController();
   
   @override
   void initState() {
@@ -650,7 +689,14 @@ class _MetersScreenState extends State<MetersScreen> {
   
   void _load() async {
     meters = await DBHelper.instance.getMeters(widget.street.id!);
+    filtered = meters;
     setState(() {});
+  }
+
+  void _search(String query) {
+    setState(() {
+      filtered = meters.where((m) => m.meterNo.contains(query) || (m.subscriber ?? '').contains(query)).toList();
+    });
   }
 
   @override
@@ -668,23 +714,46 @@ class _MetersScreenState extends State<MetersScreen> {
           )
         ],
       ),
-      body: meters.isEmpty 
-          ? const Center(child: Text('أضف عدادات للبدء'))
-          : ListView.builder(
-              itemCount: meters.length,
-              itemBuilder: (context, i) {
-                final m = meters[i];
-                return ListTile(
-                  leading: const CircleAvatar(child: Icon(Icons.speed)),
-                  title: Text('عداد ${m.meterNo}'),
-                  subtitle: Text('${m.subscriber ?? "—"} | السابقة: ${Utils.n(m.prevReading)}'),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.edit, color: Colors.blue),
-                    onPressed: () => _addDialog(context, existing: m),
-                  ),
-                );
-              },
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: TextField(
+              controller: searchCtrl,
+              decoration: const InputDecoration(labelText: 'بحث عن مشترك أو عداد...', prefixIcon: Icon(Icons.search), border: OutlineInputBorder()),
+              onChanged: _search,
             ),
+          ),
+          Expanded(
+            child: filtered.isEmpty 
+                ? const Center(child: Text('أضف عدادات للبدء أو لا توجد نتائج بحث'))
+                : ListView.builder(
+                    itemCount: filtered.length,
+                    itemBuilder: (context, i) {
+                      final m = filtered[i];
+                      return ListTile(
+                        leading: const CircleAvatar(child: Icon(Icons.speed)),
+                        title: Text('عداد ${m.meterNo}'),
+                        subtitle: Text('${m.subscriber ?? "—"} | السابقة: ${Utils.n(m.prevReading)}'),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.edit, color: Colors.blue),
+                              onPressed: () => _addDialog(context, existing: m),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              onPressed: () => _deleteDialog(context, m),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
       floatingActionButton: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -708,11 +777,32 @@ class _MetersScreenState extends State<MetersScreen> {
     );
   }
 
-  // الترقيم التلقائي للعداد
+  void _deleteDialog(BuildContext parentContext, Meter m) {
+    showDialog(
+      context: parentContext,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تأكيد الحذف'),
+        content: Text('هل أنت متأكد من حذف العداد رقم "${m.meterNo}"؟'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              await DBHelper.instance.deleteMeter(m.id!);
+              if (parentContext.mounted) Navigator.pop(ctx);
+              _load();
+            },
+            child: const Text('حذف', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      )
+    );
+  }
+
   void _addDialog(BuildContext parentContext, {Meter? existing}) {
     final sub = TextEditingController(text: existing?.subscriber ?? '');
     final prev = TextEditingController(text: existing != null ? Utils.n(existing.prevReading) : '0');
-    final autoNo = existing?.meterNo ?? '${meters.length + 1}'; // الترقيم التلقائي
+    final autoNo = existing?.meterNo ?? '${meters.length + 1}';
     
     showDialog(
       context: parentContext, 
@@ -774,6 +864,28 @@ class _StreetHistoryScreenState extends State<StreetHistoryScreen> {
     setState(() => loading = false);
   }
 
+  void _deleteInspection(BuildContext ctx, Inspection ins) async {
+    showDialog(
+      context: ctx,
+      builder: (c) => AlertDialog(
+        title: const Text('حذف فحص'),
+        content: const Text('هل أنت متأكد من حذف هذا الفحص؟ لن يتم التراجع عن هذا الإجراء.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c), child: const Text('إلغاء')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              await DBHelper.instance.deleteInspection(ins.id!);
+              if (c.mounted) Navigator.pop(c);
+              _load();
+            },
+            child: const Text('حذف', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      )
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -796,6 +908,10 @@ class _StreetHistoryScreenState extends State<StreetHistoryScreen> {
                          Text('الفوارق: ${Utils.n(ins.subTotal)}'),
                          Text('الفاقد: ${Utils.n(ins.loss)} (${ins.lossPercent.toStringAsFixed(1)}%)', style: TextStyle(color: color, fontWeight: FontWeight.bold)),
                        ],
+                     ),
+                     trailing: IconButton(
+                       icon: const Icon(Icons.delete, color: Colors.red),
+                       onPressed: () => _deleteInspection(context, ins),
                      ),
                    ),
                  );
@@ -820,10 +936,12 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   
   Map<int, TextEditingController> currentReads = {};
   Map<int, double> previousReads = {};
-  List<FocusNode> _focusNodes = []; // للتنقل بالكيبورد
+  List<FocusNode> _focusNodes = [];
   
   double prevCentral = 0;
   bool isLoading = true;
+  
+  DateTime selectedDate = DateTime.now();
 
   @override
   void initState() {
@@ -851,7 +969,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
       final last = await DBHelper.instance.getLastReading(m.id!);
       previousReads[m.id!] = last ?? m.prevReading;
       currentReads[m.id!] = TextEditingController(text: Utils.n(previousReads[m.id!]!));
-      _focusNodes.add(FocusNode()); // إضافة نقطة تركيز لكل عداد
+      _focusNodes.add(FocusNode());
     }
     setState(() => isLoading = false);
   }
@@ -879,16 +997,40 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   double get loss => centralDiff - (totalSubDiffs + sharedVal + lightingVal);
   double get lossPct => centralDiff > 0 ? (loss / centralDiff) * 100 : 0;
 
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+    );
+    if (picked != null) {
+      setState(() => selectedDate = picked);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
     
     final color = Utils.riskColor(lossPct);
+    final dateStr = DateFormat('yyyy-MM-dd').format(selectedDate);
+    
     return Scaffold(
       appBar: AppBar(title: const Text('فحص جديد (فوارق)')),
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: [
+          Card(
+            color: Colors.amber.shade50,
+            child: ListTile(
+              leading: const Icon(Icons.calendar_today, color: Colors.orange),
+              title: const Text('تاريخ الفحص:', style: TextStyle(fontWeight: FontWeight.bold)),
+              trailing: Text(dateStr, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.orange)),
+              onTap: _pickDate,
+            ),
+          ),
+          const SizedBox(height: 8),
           Card(
             color: Colors.blue.shade50,
             child: Padding(
@@ -946,7 +1088,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
           ),
           const SizedBox(height: 12),
           const Text('القراءات الحالية للعدادات:', style: TextStyle(fontWeight: FontWeight.bold)),
-          // استخدام List.generate للتنقل بالكيبورد
           ...List.generate(widget.meters.length, (index) {
             final m = widget.meters[index];
             final prev = previousReads[m.id!] ?? 0;
@@ -1038,7 +1179,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
               style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(45), backgroundColor: color),
               onPressed: () async {
                 final ins = Inspection(
-                  streetId: widget.street.id!, periodType: 'custom', start: DateTime.now().toString().split(' ')[0], end: DateTime.now().toString().split(' ')[0],
+                  streetId: widget.street.id!, periodType: 'custom', start: dateStr, end: dateStr,
                   central: currentCentral, subTotal: totalSubDiffs, shared: sharedVal, lighting: lightingVal, loss: loss, lossPercent: lossPct,
                 );
                 final rMap = {for (var e in currentReads.entries) e.key: double.tryParse(e.value.text) ?? 0};
