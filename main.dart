@@ -406,13 +406,11 @@ class Utils {
   }
 }
 
-// محول يمنع الأرقام العربية ويجبر الإنجليزية فقط
 class EnglishNumberFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
     String text = newValue.text;
     
-    // تحويل فوري للأرقام العربية إذا تم إدخالها
     text = text.split('').map((c) {
       final code = c.codeUnitAt(0);
       if (code >= 0x0660 && code <= 0x0669) return String.fromCharCode(code - 0x0660 + 0x30);
@@ -420,7 +418,6 @@ class EnglishNumberFormatter extends TextInputFormatter {
       return c;
     }).join();
     
-    // منع الفاصلة
     text = text.replaceAll(',', '');
 
     if (RegExp(r'^-?\d*\.?\d*$').hasMatch(text)) {
