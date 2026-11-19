@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:intl/intl.dart';
@@ -106,16 +107,20 @@ class Inspection {
   final double lighting;
   final double loss;
   final double lossPercent;
+  
   Inspection({this.id, required this.streetId, required this.periodType, required this.start, required this.end, required this.central, required this.subTotal, required this.shared, required this.lighting, required this.loss, required this.lossPercent});
+  
   Map<String, dynamic> toMap() => {
     'id': id, 'street_id': streetId, 'period_type': periodType, 'start': start, 'end': end,
     'central': central, 'sub_total': subTotal, 'shared': shared, 'lighting': lighting,
     'loss': loss, 'loss_percent': lossPercent
   };
+  
   factory Inspection.fromMap(Map<String, dynamic> m) => Inspection(
     id: m['id'], streetId: m['street_id'], periodType: m['period_type'], start: m['start'], end: m['end'],
-    central: m['central'], subTotal: m['sub_total'], shared: m['shared'], lighting: m['lighting'],
-    loss: m['loss'], lossPercent: m['loss_percent']
+    central: (m['central'] as num).toDouble(), subTotal: (m['sub_total'] as num).toDouble(), 
+    shared: (m['shared'] as num).toDouble(), lighting: (m['lighting'] as num).toDouble(),
+    loss: (m['loss'] as num).toDouble(), lossPercent: (m['loss_percent'] as num).toDouble()
   );
 }
 
@@ -191,15 +196,30 @@ class DBHelper {
     return d.update('streets', s.toMap(), where: 'id = ?', whereArgs: [s.id]);
   }
 
+  // حذف متسلسل للشارع (يمسح كل شيء مرتبط به)
   Future<int> deleteStreet(int id) async {
     final d = await db;
-    return d.delete('streets', where: 'id = ?', whereArgs: [id]);
+    await d.transaction((txn) async {
+      await txn.rawDelete('DELETE FROM readings WHERE meter_id IN (SELECT id FROM meters WHERE street_id = ?)', [id]);
+      await txn.rawDelete('DELETE FROM readings WHERE inspection_id IN (SELECT id FROM inspections WHERE street_id = ?)', [id]);
+      await txn.delete('inspections', where: 'street_id = ?', whereArgs: [id]);
+      await txn.delete('meters', where: 'street_id = ?', whereArgs: [id]);
+      return txn.delete('streets', where: 'id = ?', whereArgs: [id]);
+    });
+    return 1;
   }
 
   Future<List<Meter>> getMeters(int streetId) async {
     final d = await db;
-    final res = await d.query('meters', where: 'street_id = ?', whereArgs: [streetId], orderBy: 'id ASC');
+    final res = await d.query('meters', where: 'street_id = ?', whereArgs: [streetId], orderBy: 'CAST(meter_no AS INTEGER) ASC');
     return res.map(Meter.fromMap).toList();
+  }
+
+  Future<String> nextMeterNo(int streetId) async {
+    final d = await db;
+    final r = await d.rawQuery('SELECT MAX(CAST(meter_no AS INTEGER)) AS mx FROM meters WHERE street_id = ?', [streetId]);
+    final mx = (r.first['mx'] as num?)?.toInt() ?? 0;
+    return '${mx + 1}';
   }
 
   Future<int> addMeter(int streetId, String no, String sub, double prevReading) async {
@@ -217,11 +237,45 @@ class DBHelper {
     return d.delete('meters', where: 'id = ?', whereArgs: [id]);
   }
 
-  Future<double?> getLastReading(int meterId) async {
+  // جلب القراءة السابقة للعداد بناءً على الفحص الذي يسبقه
+  Future<double> getPreviousReadingForMeter(int meterId, int? beforeInspectionId, int streetId) async {
     final d = await db;
-    final res = await d.rawQuery('SELECT reading FROM readings WHERE meter_id = ? ORDER BY id DESC LIMIT 1', [meterId]);
-    if (res.isEmpty) return null;
-    return res.first['reading'] as double;
+    List<Map<String, dynamic>> res;
+    if (beforeInspectionId != null) {
+      res = await d.rawQuery('''
+        SELECT r.reading FROM readings r
+        INNER JOIN inspections i ON r.inspection_id = i.id
+        WHERE r.meter_id = ? AND i.street_id = ? AND i.id < ?
+        ORDER BY i.id DESC LIMIT 1
+      ''', [meterId, streetId, beforeInspectionId]);
+    } else {
+      res = await d.rawQuery('''
+        SELECT r.reading FROM readings r
+        INNER JOIN inspections i ON r.inspection_id = i.id
+        WHERE r.meter_id = ? AND i.street_id = ?
+        ORDER BY i.id DESC LIMIT 1
+      ''', [meterId, streetId]);
+    }
+    if (res.isNotEmpty) return (res.first['reading'] as num).toDouble();
+    
+    // إذا لم يوجد فحص سابق، نأخذ القراءة الأساسية للعداد
+    final m = await d.query('meters', where: 'id = ?', whereArgs: [meterId]);
+    return (m.first['prev_reading'] as num?)?.toDouble() ?? 0;
+  }
+
+  // جلب المركزية السابقة بناءً على الفحص الذي يسبقه
+  Future<double> getPreviousCentral(int streetId, int? beforeInspectionId) async {
+    final d = await db;
+    List<Map<String, dynamic>> res;
+    if (beforeInspectionId != null) {
+      res = await d.query('inspections', where: 'street_id = ? AND id < ?', whereArgs: [streetId, beforeInspectionId], orderBy: 'id DESC', limit: 1);
+    } else {
+      res = await d.query('inspections', where: 'street_id = ?', whereArgs: [streetId], orderBy: 'id DESC', limit: 1);
+    }
+    if (res.isNotEmpty) return (res.first['central'] as num).toDouble();
+    
+    final s = await d.query('streets', where: 'id = ?', whereArgs: [streetId]);
+    return (s.first['central_prev'] as num?)?.toDouble() ?? 0;
   }
 
   Future<Inspection?> getLastInspection(int streetId) async {
@@ -237,11 +291,22 @@ class DBHelper {
     return res.map(Inspection.fromMap).toList();
   }
 
-  Future<int> deleteInspection(int id) async {
+  Future<Map<int, double>> getInspectionReadings(int inspectionId) async {
     final d = await db;
-    return d.delete('inspections', where: 'id = ?', whereArgs: [id]);
+    final res = await d.query('readings', where: 'inspection_id = ?', whereArgs: [inspectionId]);
+    return {for (var r in res) (r['meter_id'] as int): (r['reading'] as num).toDouble()};
   }
 
+  Future<int> deleteInspection(int id) async {
+    final d = await db;
+    await d.transaction((txn) async {
+      await txn.delete('readings', where: 'inspection_id = ?', whereArgs: [id]);
+      return txn.delete('inspections', where: 'id = ?', whereArgs: [id]);
+    });
+    return 1;
+  }
+
+  // حفظ فحص جديد
   Future<void> saveInspection(Inspection ins, Map<int, double> readings) async {
     final d = await db;
     await d.transaction((txn) async {
@@ -249,10 +314,17 @@ class DBHelper {
       for (var e in readings.entries) {
         await txn.insert('readings', {'inspection_id': insId, 'meter_id': e.key, 'reading': e.value});
       }
-      
-      await txn.update('streets', {'central_prev': ins.central}, where: 'id = ?', whereArgs: [ins.streetId]);
+    });
+  }
+
+  // تعديل فحص سابق
+  Future<void> updateInspection(int id, Inspection ins, Map<int, double> readings) async {
+    final d = await db;
+    await d.transaction((txn) async {
+      await txn.update('inspections', ins.toMap(), where: 'id = ?', whereArgs: [id]);
+      await txn.delete('readings', where: 'inspection_id = ?', whereArgs: [id]);
       for (var e in readings.entries) {
-        await txn.update('meters', {'prev_reading': e.value}, where: 'id = ?', whereArgs: [e.key]);
+        await txn.insert('readings', {'inspection_id': id, 'meter_id': e.key, 'reading': e.value});
       }
     });
   }
@@ -261,6 +333,18 @@ class DBHelper {
     final d = await db;
     final res = await d.query('inspections', orderBy: 'id DESC');
     return res.map(Inspection.fromMap).toList();
+  }
+
+  // جلب تاريخ قراءات عداد معين
+  Future<List<Map<String, dynamic>>> getMeterReadings(int meterId) async {
+    final d = await db;
+    return d.rawQuery('''
+      SELECT r.reading, i.end AS inspection_date, i.id AS inspection_id
+      FROM readings r
+      INNER JOIN inspections i ON r.inspection_id = i.id
+      WHERE r.meter_id = ?
+      ORDER BY i.id ASC
+    ''', [meterId]);
   }
 
   Future<String> backupData() async {
@@ -290,18 +374,30 @@ class DBHelper {
       for (var row in data['meters']) { await txn.insert('meters', Map<String, dynamic>.from(row)); }
       for (var row in data['inspections']) { await txn.insert('inspections', Map<String, dynamic>.from(row)); }
       for (var row in data['readings']) { await txn.insert('readings', Map<String, dynamic>.from(row)); }
+      
+      // إعادة ضبط التسلسل التلقائي
+      for (final t in ['users', 'streets', 'meters', 'inspections', 'readings']) {
+        final maxId = Sqflite.firstIntValue(await txn.rawQuery('SELECT MAX(id) FROM $t')) ?? 0;
+        await txn.rawDelete('DELETE FROM sqlite_sequence WHERE name = ?', [t]);
+        if (maxId > 0) {
+          await txn.rawInsert('INSERT INTO sqlite_sequence(name, seq) VALUES(?, ?)', [t, maxId]);
+        }
+      }
     });
   }
 }
 
-// ================== دوال التلوين والتسمية ==================
+// ================== دوال مساعدة (Utils) ==================
 class Utils {
   static final fmt = NumberFormat('#,##0.##', 'en');
   static String n(num v) => fmt.format(v);
   
+  static const double nameFontSize = 16;
+  static const double subFontSize = 13;
+  
   static Color riskColor(double p) {
-    if (p < 0) return Colors.grey;                // رمادي (بيانات خاطئة)
-    if (p >= 100) return const Color(0xFFB71C1C); // أحمر قاتم جداً
+    if (p < 0) return Colors.grey;
+    if (p >= 100) return const Color(0xFFB71C1C);
     if (p > 35) return Colors.red;                
     if (p > 20) return Colors.orange;             
     if (p > 10) return Colors.amber;              
@@ -315,6 +411,25 @@ class Utils {
     if (p > 20) return 'مشكوك';
     if (p > 10) return 'تحذير';
     return 'طبيعي';
+  }
+}
+
+class ArabicNumberFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+    String text = newValue.text;
+    text = text.split('').map((c) {
+      final code = c.codeUnitAt(0);
+      if (code >= 0x0660 && code <= 0x0669) return String.fromCharCode(code - 0x0660 + 0x30);
+      if (code >= 0x06F0 && code <= 0x06F9) return String.fromCharCode(code - 0x06F0 + 0x30);
+      return c;
+    }).join();
+    text = text.replaceAll(',', '');
+
+    if (RegExp(r'^-?\d*\.?\d*$').hasMatch(text)) {
+      return TextEditingValue(text: text, selection: newValue.selection);
+    }
+    return oldValue;
   }
 }
 
@@ -458,6 +573,29 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 8),
           ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(50), backgroundColor: Colors.teal),
+            onPressed: () async {
+              if (streets.isEmpty) return;
+              final s = await showDialog<Street>(
+                context: context,
+                builder: (ctx) => SimpleDialog(
+                  title: const Text('اختر الشارع للمتابعة'),
+                  children: streets.map((st) => SimpleDialogOption(
+                    onPressed: () => Navigator.pop(ctx, st),
+                    child: Text(st.name, style: const TextStyle(fontSize: 16)),
+                  )).toList(),
+                ),
+              );
+              if (s != null && mounted) {
+                await Navigator.push(context, MaterialPageRoute(builder: (_) => StreetDashboardScreen(street: s)));
+                _loadData();
+              }
+            },
+            icon: const Icon(Icons.dashboard, color: Colors.white),
+            label: const Text('لوحة المتابعة الحية', style: TextStyle(color: Colors.white)),
+          ),
+          const SizedBox(height: 8),
+          ElevatedButton.icon(
             style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(50), backgroundColor: Colors.grey.shade200, foregroundColor: Colors.black),
             onPressed: () async {
               await Navigator.push(context, MaterialPageRoute(builder: (_) => const ReportsScreen()));
@@ -574,7 +712,7 @@ class _StreetsScreenState extends State<StreetsScreen> {
                 return Card(
                   child: ListTile(
                     leading: const Icon(Icons.signpost),
-                    title: Text(s.name),
+                    title: Text(s.name, style: const TextStyle(fontSize: Utils.nameFontSize, fontWeight: FontWeight.bold)),
                     subtitle: Text('مركزي: ${s.centralMeter ?? "—"} | سابقة: ${Utils.n(s.centralPrev)}'),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -633,7 +771,7 @@ class _StreetsScreenState extends State<StreetsScreen> {
   void _addDialog(BuildContext parentContext, {Street? existing}) {
     final name = TextEditingController(text: existing?.name ?? '');
     final cen = TextEditingController(text: existing?.centralMeter ?? '');
-    final cenPrev = TextEditingController(text: existing != null ? Utils.n(existing.centralPrev) : '0');
+    final cenPrev = TextEditingController(text: existing != null ? existing.centralPrev.toString() : '0');
     
     showDialog(
       context: parentContext, 
@@ -645,7 +783,7 @@ class _StreetsScreenState extends State<StreetsScreen> {
           children: [
             TextField(controller: name, decoration: const InputDecoration(labelText: 'اسم الشارع')),
             TextField(controller: cen, decoration: const InputDecoration(labelText: 'رقم العداد المركزي')),
-            TextField(controller: cenPrev, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'القراءة المركزية السابقة')),
+            TextField(controller: cenPrev, keyboardType: TextInputType.number, inputFormatters: [ArabicNumberFormatter()], decoration: const InputDecoration(labelText: 'القراءة المركزية السابقة')),
           ],
         ),
       ),
@@ -735,8 +873,14 @@ class _MetersScreenState extends State<MetersScreen> {
                       final m = filtered[i];
                       return ListTile(
                         leading: const CircleAvatar(child: Icon(Icons.speed)),
-                        title: Text('عداد ${m.meterNo}'),
-                        subtitle: Text('${m.subscriber ?? "—"} | السابقة: ${Utils.n(m.prevReading)}'),
+                        title: Text('عداد ${m.meterNo}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: Utils.nameFontSize)),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(m.subscriber ?? '—', style: TextStyle(fontSize: Utils.subFontSize, fontWeight: FontWeight.w600, color: Colors.black87)),
+                            Text('السابقة: ${Utils.n(m.prevReading)}', style: const TextStyle(fontSize: 11, color: Colors.blue)),
+                          ],
+                        ),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -750,6 +894,7 @@ class _MetersScreenState extends State<MetersScreen> {
                             ),
                           ],
                         ),
+                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => MeterHistoryScreen(meter: m, streetId: widget.street.id!))),
                       );
                     },
                   ),
@@ -801,11 +946,12 @@ class _MetersScreenState extends State<MetersScreen> {
     );
   }
 
-  void _addDialog(BuildContext parentContext, {Meter? existing}) {
+  Future<void> _addDialog(BuildContext parentContext, {Meter? existing}) async {
+    String autoNo = existing?.meterNo ?? await DBHelper.instance.nextMeterNo(widget.street.id!);
     final sub = TextEditingController(text: existing?.subscriber ?? '');
-    final prev = TextEditingController(text: existing != null ? Utils.n(existing.prevReading) : '0');
-    final autoNo = existing?.meterNo ?? '${meters.length + 1}';
+    final prev = TextEditingController(text: existing != null ? existing.prevReading.toString() : '0');
     
+    if (!parentContext.mounted) return;
     showDialog(
       context: parentContext, 
       builder: (BuildContext ctx) => AlertDialog(
@@ -820,7 +966,7 @@ class _MetersScreenState extends State<MetersScreen> {
               decoration: const InputDecoration(labelText: 'رقم العداد (تلقائي)', filled: true, fillColor: Color(0xFFF0F0F0)),
             ),
             TextField(controller: sub, decoration: const InputDecoration(labelText: 'اسم المشترك')),
-            TextField(controller: prev, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'القراءة السابقة للعداد')),
+            TextField(controller: prev, keyboardType: TextInputType.number, inputFormatters: [ArabicNumberFormatter()], decoration: const InputDecoration(labelText: 'القراءة السابقة للعداد')),
           ],
         ),
       ),
@@ -902,7 +1048,7 @@ class _StreetHistoryScreenState extends State<StreetHistoryScreen> {
                  return Card(
                    margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                    child: ListTile(
-                     title: Text('التاريخ: ${ins.end}'),
+                     title: Text('التاريخ: ${ins.end}', style: const TextStyle(fontWeight: FontWeight.bold)),
                      subtitle: Column(
                        crossAxisAlignment: CrossAxisAlignment.start,
                        children: [
@@ -911,9 +1057,26 @@ class _StreetHistoryScreenState extends State<StreetHistoryScreen> {
                          Text('الفاقد: ${Utils.n(ins.loss)} (${ins.lossPercent.toStringAsFixed(1)}%)', style: TextStyle(color: color, fontWeight: FontWeight.bold)),
                        ],
                      ),
-                     trailing: IconButton(
-                       icon: const Icon(Icons.delete, color: Colors.red),
-                       onPressed: () => _deleteInspection(context, ins),
+                     trailing: Row(
+                       mainAxisSize: MainAxisSize.min,
+                       children: [
+                         IconButton(
+                           icon: const Icon(Icons.edit, color: Colors.blue),
+                           tooltip: 'تعديل',
+                           onPressed: () async {
+                             final meters = await DBHelper.instance.getMeters(widget.street.id!);
+                             if (!mounted) return;
+                             await Navigator.push(context, MaterialPageRoute(
+                               builder: (_) => NewInspectionScreen(street: widget.street, meters: meters, existingInspection: ins),
+                             ));
+                             _load();
+                           },
+                         ),
+                         IconButton(
+                           icon: const Icon(Icons.delete, color: Colors.red),
+                           onPressed: () => _deleteInspection(context, ins),
+                         ),
+                       ],
                      ),
                    ),
                  );
@@ -926,7 +1089,8 @@ class _StreetHistoryScreenState extends State<StreetHistoryScreen> {
 class NewInspectionScreen extends StatefulWidget {
   final Street street;
   final List<Meter> meters;
-  const NewInspectionScreen({super.key, required this.street, required this.meters});
+  final Inspection? existingInspection;
+  const NewInspectionScreen({super.key, required this.street, required this.meters, this.existingInspection});
   @override
   State<NewInspectionScreen> createState() => _NewInspectionScreenState();
 }
@@ -942,8 +1106,9 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   
   double prevCentral = 0;
   bool isLoading = true;
-  
   DateTime selectedDate = DateTime.now();
+
+  bool get isEditing => widget.existingInspection != null;
 
   @override
   void initState() {
@@ -953,24 +1118,35 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
 
   @override
   void dispose() {
-    for (var node in _focusNodes) {
-      node.dispose();
-    }
+    for (var node in _focusNodes) { node.dispose(); }
+    for (var c in currentReads.values) { c.dispose(); }
     super.dispose();
   }
 
   void _preload() async {
-    final lastIns = await DBHelper.instance.getLastInspection(widget.street.id!);
-    if (lastIns != null) {
-      prevCentral = lastIns.central;
-    } else {
-      prevCentral = widget.street.centralPrev;
+    final editing = widget.existingInspection;
+    
+    // جلب المركزية السابقة بناءً على الفحص السابق
+    prevCentral = await DBHelper.instance.getPreviousCentral(widget.street.id!, editing?.id);
+
+    Map<int, double>? existingReadings;
+    if (editing != null) {
+      existingReadings = await DBHelper.instance.getInspectionReadings(editing.id!);
+      central.text = editing.central % 1 == 0 ? editing.central.toInt().toString() : editing.central.toString();
+      shared.text = editing.shared % 1 == 0 ? editing.shared.toInt().toString() : editing.shared.toString();
+      lighting.text = editing.lighting % 1 == 0 ? editing.lighting.toInt().toString() : editing.lighting.toString();
+      try { selectedDate = DateFormat('yyyy-MM-dd').parse(editing.end); } catch (_) {}
     }
 
     for (var m in widget.meters) {
-      final last = await DBHelper.instance.getLastReading(m.id!);
-      previousReads[m.id!] = last ?? m.prevReading;
-      currentReads[m.id!] = TextEditingController(text: Utils.n(previousReads[m.id!]!));
+      final prev = await DBHelper.instance.getPreviousReadingForMeter(m.id!, editing?.id, widget.street.id!);
+      previousReads[m.id!] = prev;
+      
+      final initVal = existingReadings?[m.id!] ?? prev;
+      // هنا السر: وضع الرقم كـ String بدون فواصل إطلاقاً
+      String initStr = initVal % 1 == 0 ? initVal.toInt().toString() : initVal.toString();
+      
+      currentReads[m.id!] = TextEditingController(text: initStr);
       _focusNodes.add(FocusNode());
     }
     setState(() => isLoading = false);
@@ -979,13 +1155,9 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   double get currentCentral => double.tryParse(central.text) ?? 0;
   double get sharedVal => double.tryParse(shared.text) ?? 0;
   double get lightingVal => double.tryParse(lighting.text) ?? 0;
-
   double get centralDiff => currentCentral - prevCentral;
+  double get totalPrevReadings => previousReads.values.fold(0.0, (sum, val) => sum + val);
   
-  double get totalPrevReadings {
-    return previousReads.values.fold(0.0, (sum, val) => sum + val);
-  }
-
   double get totalCurrentReadings {
     double total = 0;
     for (var m in widget.meters) {
@@ -995,7 +1167,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   }
 
   double get totalSubDiffs => totalCurrentReadings - totalPrevReadings;
-
   double get loss => centralDiff - (totalSubDiffs + sharedVal + lightingVal);
   double get lossPct => centralDiff > 0 ? (loss / centralDiff) * 100 : 0;
 
@@ -1017,11 +1188,10 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
     
     final color = Utils.riskColor(lossPct);
     final dateStr = DateFormat('yyyy-MM-dd').format(selectedDate);
-    
     bool isCentralValid = currentCentral >= prevCentral;
     
     return Scaffold(
-      appBar: AppBar(title: const Text('فحص جديد (فوارق)')),
+      appBar: AppBar(title: Text(isEditing ? 'تعديل فحص سابق' : 'فحص جديد (فوارق)')),
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: [
@@ -1058,6 +1228,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                   TextField(
                     controller: central, 
                     keyboardType: TextInputType.number, 
+                    inputFormatters: [ArabicNumberFormatter()],
                     textInputAction: TextInputAction.next,
                     decoration: InputDecoration(
                       labelText: 'القراءة المركزية الحالية (الكلي)', 
@@ -1073,6 +1244,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                         child: TextField(
                           controller: shared, 
                           keyboardType: TextInputType.number, 
+                          inputFormatters: [ArabicNumberFormatter()],
                           textInputAction: TextInputAction.next,
                           decoration: const InputDecoration(labelText: 'أحمال مشتركة (للفترة)'), 
                           onChanged: (_) => setState((){}),
@@ -1083,6 +1255,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                         child: TextField(
                           controller: lighting, 
                           keyboardType: TextInputType.number, 
+                          inputFormatters: [ArabicNumberFormatter()],
                           textInputAction: TextInputAction.next,
                           decoration: const InputDecoration(labelText: 'إنارة (للفترة)'), 
                           onChanged: (_) => setState((){}),
@@ -1102,11 +1275,13 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
             final currentStr = currentReads[m.id!]?.text ?? '0';
             final currentVal = double.tryParse(currentStr) ?? 0;
             bool isSubValid = currentVal >= prev;
+            final consumption = currentVal - prev;
+            Color consColor = consumption < 0 ? Colors.red : (consumption == 0 ? Colors.orange : Colors.green);
             
             return Card(
               margin: const EdgeInsets.symmetric(vertical: 4),
               child: Padding(
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.all(10),
                 child: Row(
                   children: [
                     Expanded(
@@ -1114,9 +1289,11 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('عداد ${m.meterNo}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                          Text(m.subscriber ?? '—', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          Text('عداد ${m.meterNo}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: Utils.nameFontSize)),
+                          Text(m.subscriber ?? '—', style: TextStyle(fontSize: Utils.subFontSize, fontWeight: FontWeight.w600, color: Colors.black87)),
                           Text('السابقة: ${Utils.n(prev)}', style: const TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.bold)),
+                          if (consumption != 0)
+                            Text('الاستهلاك: ${Utils.n(consumption)}', style: TextStyle(fontSize: 11, color: consColor, fontWeight: FontWeight.bold)),
                         ],
                       ),
                     ),
@@ -1126,6 +1303,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                         controller: currentReads[m.id!],
                         focusNode: _focusNodes[index],
                         keyboardType: TextInputType.number,
+                        inputFormatters: [ArabicNumberFormatter()],
                         textInputAction: index == widget.meters.length - 1 ? TextInputAction.done : TextInputAction.next,
                         onSubmitted: (_) {
                           if (index < widget.meters.length - 1) {
@@ -1180,7 +1358,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text('الفرق (المحسوب):', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
-                // تم إزالة كلمة const من هنا
                 Text(Utils.n(totalSubDiffs), style: TextStyle(fontWeight: FontWeight.bold, color: totalSubDiffs >= 0 ? Colors.blue : Colors.red)),
               ],
             ),
@@ -1204,13 +1381,241 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                   central: currentCentral, subTotal: totalSubDiffs, shared: sharedVal, lighting: lightingVal, loss: loss, lossPercent: lossPct,
                 );
                 final rMap = {for (var e in currentReads.entries) e.key: double.tryParse(e.value.text) ?? 0};
-                await DBHelper.instance.saveInspection(ins, rMap);
+                
+                if (isEditing) {
+                  await DBHelper.instance.updateInspection(widget.existingInspection!.id!, ins, rMap);
+                } else {
+                  await DBHelper.instance.saveInspection(ins, rMap);
+                }
+                
                 if (mounted) Navigator.pop(context);
               } : null,
-              child: Text(isCentralValid ? 'حفظ الفحص' : 'تحقق من القراءات (سالب)', style: const TextStyle(color: Colors.white, fontSize: 16)),
+              child: Text(isEditing ? 'حفظ التعديلات' : 'حفظ الفحص', style: const TextStyle(color: Colors.white, fontSize: 16)),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class MeterHistoryScreen extends StatefulWidget {
+  final Meter meter;
+  final int streetId;
+  const MeterHistoryScreen({super.key, required this.meter, required this.streetId});
+  @override
+  State<MeterHistoryScreen> createState() => _MeterHistoryScreenState();
+}
+
+class _MeterHistoryScreenState extends State<MeterHistoryScreen> {
+  List<Map<String, dynamic>> rows = [];
+  bool loading = true;
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    rows = await DBHelper.instance.getMeterReadings(widget.meter.id!);
+    setState(() => loading = false);
+  }
+
+  double get avgConsumption {
+    if (rows.length < 2) return 0;
+    double total = 0;
+    for (int i = 1; i < rows.length; i++) {
+      total += (rows[i]['reading'] as num).toDouble() - (rows[i - 1]['reading'] as num).toDouble();
+    }
+    return total / (rows.length - 1);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('عداد ${widget.meter.meterNo}')),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              padding: const EdgeInsets.all(12),
+              children: [
+                Card(
+                  color: Colors.green.shade50,
+                  child: ListTile(
+                    title: Text(widget.meter.subscriber ?? '—', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                    subtitle: Text('السابقة الأولية: ${Utils.n(widget.meter.prevReading)}'),
+                  ),
+                ),
+                Card(
+                  color: Colors.blue.shade50,
+                  child: ListTile(
+                    leading: const Icon(Icons.show_chart, color: Colors.blue),
+                    title: const Text('متوسط الاستهلاك', style: TextStyle(fontWeight: FontWeight.bold)),
+                    trailing: Text(Utils.n(avgConsumption), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue)),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                if (rows.isEmpty) const Center(child: Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Text('لا توجد قراءات مسجلة بعد'),
+                )),
+                ...List.generate(rows.length, (i) {
+                  final r = rows[i];
+                  final current = (r['reading'] as num).toDouble();
+                  final prev = i > 0 ? (rows[i - 1]['reading'] as num).toDouble() : widget.meter.prevReading;
+                  final cons = current - prev;
+                  Color color = Colors.green;
+                  String note = 'طبيعي';
+                  if (cons < 0) { color = Colors.red; note = 'قراءة سالبة ⚠'; }
+                  else if (cons == 0) { color = Colors.orange; note = 'استهلاك صفر ⚠'; }
+                  else if (avgConsumption > 0 && cons > avgConsumption * 3) { color = Colors.deepOrange; note = 'مرتفع جدًا 🔥'; }
+                  else if (avgConsumption > 0 && cons < avgConsumption * 0.2) { color = Colors.amber; note = 'منخفض مشبوه'; }
+                  
+                  return Card(
+                    child: ListTile(
+                      dense: true,
+                      title: Text('${r['inspection_date']}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text('${Utils.n(prev)} → ${Utils.n(current)}'),
+                      trailing: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(Utils.n(cons), style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 16)),
+                          Text(note, style: TextStyle(fontSize: 10, color: color)),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              ],
+            ),
+    );
+  }
+}
+
+class StreetDashboardScreen extends StatefulWidget {
+  final Street street;
+  const StreetDashboardScreen({super.key, required this.street});
+  @override
+  State<StreetDashboardScreen> createState() => _StreetDashboardScreenState();
+}
+
+class _StreetDashboardScreenState extends State<StreetDashboardScreen> {
+  Map<String, dynamic>? snapshot;
+  bool loading = true;
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    final ins = await DBHelper.instance.getLastInspection(widget.street.id!);
+    if (ins == null) {
+      setState(() { snapshot = null; loading = false; });
+      return;
+    }
+    
+    final meters = await DBHelper.instance.getMeters(widget.street.id!);
+    final currentReads = await DBHelper.instance.getInspectionReadings(ins.id!);
+    
+    List<Map<String, dynamic>> meterData = [];
+    for (var m in meters) {
+      final prev = await DBHelper.instance.getPreviousReadingForMeter(m.id!, ins.id, widget.street.id!);
+      final current = currentReads[m.id!];
+      meterData.add({
+        'id': m.id, 'meter_no': m.meterNo, 'subscriber': m.subscriber,
+        'prev': prev, 'current': current,
+        'consumption': current != null ? current - prev : null,
+      });
+    }
+    
+    setState(() {
+      snapshot = {'inspection': ins, 'meters': meterData};
+      loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (snapshot == null) {
+      return Scaffold(
+        appBar: AppBar(title: Text(widget.street.name)),
+        body: const Center(child: Text('لا توجد فحوصات بعد لهذا الشارع')),
+      );
+    }
+    final ins = snapshot!['inspection'] as Inspection;
+    final meters = (snapshot!['meters'] as List).cast<Map<String, dynamic>>();
+    final color = Utils.riskColor(ins.lossPercent);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.street.name),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () { setState(() => loading = true); _load(); },
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(12),
+        children: [
+          Card(
+            color: color.withOpacity(0.15),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                children: [
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                    const Text('آخر فحص:', style: TextStyle(fontWeight: FontWeight.bold)),
+                    Text(ins.end, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  ]),
+                  const Divider(),
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                    const Text('المركزي:'),
+                    Text(Utils.n(ins.central), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  ]),
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                    const Text('مجموع الاستهلاك:'),
+                    Text(Utils.n(ins.subTotal), style: const TextStyle(fontWeight: FontWeight.bold)),
+                  ]),
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                    const Text('الفاقد:'),
+                    Text('${Utils.n(ins.loss)} (${ins.lossPercent.toStringAsFixed(1)}%)', style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 16)),
+                  ]),
+                  const SizedBox(height: 4),
+                  Chip(
+                    label: Text(Utils.riskName(ins.lossPercent), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    backgroundColor: color,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text('استهلاك العدادات (${meters.length}):', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 8),
+          ...meters.map((m) {
+            final cons = m['consumption'] as double?;
+            Color c = Colors.grey;
+            if (cons != null) {
+              if (cons < 0) c = Colors.red;
+              else if (cons == 0) c = Colors.orange;
+              else c = Colors.green;
+            }
+            return Card(
+              margin: const EdgeInsets.symmetric(vertical: 3),
+              child: ListTile(
+                dense: true,
+                leading: CircleAvatar(
+                  backgroundColor: c.withOpacity(0.2),
+                  child: Text(m['meter_no'].toString(), style: TextStyle(color: c, fontWeight: FontWeight.bold, fontSize: 12)),
+                ),
+                title: Text(m['subscriber'] ?? '—', style: TextStyle(fontSize: Utils.subFontSize, fontWeight: FontWeight.w600)),
+                subtitle: Text('${Utils.n(m['prev'])} → ${m['current'] != null ? Utils.n(m['current']) : "لم يُقرأ"}', style: const TextStyle(fontSize: 11)),
+                trailing: cons == null ? const Text('—') : Text(Utils.n(cons), style: TextStyle(fontWeight: FontWeight.bold, color: c, fontSize: 15)),
+              ),
+            );
+          }),
+        ],
       ),
     );
   }
