@@ -23,28 +23,36 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          flutter-version: '3.24.0' # إصدار مستقر ومتوافق
+          flutter-version: '3.24.0'
 
-      # 1. إنشاء المشروع وتحديد إصدارات Kotlin و AGP من البداية
       - name: Create Android Platform
-        run: flutter create . --project-name electricity_audit --platforms=android --kotlin-version 2.0.0 --android-gradle-plugin-version 8.5.0
+        run: flutter create . --project-name electricity_audit --platforms=android
 
       - name: Install dependencies
         run: flutter pub get
 
-      # 2. إصلاح مستودعات Gradle
+      # إصلاح مستودعات Gradle
       - name: Fix Gradle Repositories
         run: |
           sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url = uri("https:\/\/jitpack.io") } /g' android/build.gradle.kts || true
           sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url = uri("https:\/\/jitpack.io") } /g' android/settings.gradle.kts || true
 
-      # 3. ضبط إصدارات SDK
+      # ✨ التعديل الحاسم: تحديث إصدارات Kotlin و AGP في المكان الصحيح ✨
+      - name: Update Kotlin and AGP Versions
+        run: |
+          # تحديث إصدار Kotlin في ملف settings.gradle.kts
+          sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "2.0.0"/' android/settings.gradle.kts || true
+          
+          # تحديث إصدار AGP في ملف settings.gradle.kts
+          sed -i 's/id "com.android.application" version ".*"/id "com.android.application" version "8.3.0"/' android/settings.gradle.kts || true
+
+      # ضبط إصدارات SDK
       - name: Update Min and Compile SDK
         run: |
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 21/' android/app/build.gradle.kts || true
           sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 35/' android/app/build.gradle.kts || true
 
-      # 4. تعطيل تصغير الكود لضمان البناء
+      # تعطيل تصغير الكود لضمان البناء
       - name: Disable Minify and Shrink Resources
         run: |
           sed -i 's/isMinifyEnabled = true/isMinifyEnabled = false/g' android/app/build.gradle.kts || true
