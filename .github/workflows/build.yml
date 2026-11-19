@@ -25,8 +25,9 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Prepare Project
-        run: flutter create . --project-name electricity_audit
+      # 1. إنشاء مجلد android بشكل صريح
+      - name: Create Android Platform
+        run: flutter create . --platforms=android
 
       - name: Install dependencies
         run: flutter pub get
@@ -36,7 +37,7 @@ jobs:
           sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url "https:\/\/jitpack.io" } /g' android/build.gradle || true
           sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url "https:\/\/jitpack.io" } /g' android/settings.gradle || true
 
-      # هذا هو السطر الجديد الذي يحل مشكلة minSdkVersion
+      # 2. تعديل minSdkVersion (الآن الملف موجود)
       - name: Set Min SDK Version to 23
         run: |
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' android/app/build.gradle
