@@ -23,7 +23,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          flutter-version: '3.22.0'
+          flutter-version: '3.24.0'
 
       - name: Create Android Platform
         run: flutter create . --project-name electricity_audit --platforms=android
@@ -31,8 +31,24 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Fix Gradle Repositories
+        run: |
+          sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url = uri("https:\/\/jitpack.io") } /g' android/build.gradle.kts || true
+          sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url = uri("https:\/\/jitpack.io") } /g' android/settings.gradle.kts || true
+
+      - name: Update Min SDK and Compile SDK
+        run: |
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' android/app/build.gradle.kts || true
+          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 34/' android/app/build.gradle.kts || true
+
+      - name: Disable Minify and Shrink Resources
+        run: |
+          sed -i 's/isMinifyEnabled = true/isMinifyEnabled = false/g' android/app/build.gradle.kts || true
+          sed -i 's/minifyEnabled true/minifyEnabled false/g' android/app/build.gradle.kts || true
+          sed -i 's/shrinkResources true/shrinkResources false/g' android/app/build.gradle.kts || true
+
       - name: Build APK
-        run: flutter build apk --release
+        run: flutter build apk --release --no-shrink
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
