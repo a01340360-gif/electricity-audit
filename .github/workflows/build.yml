@@ -36,18 +36,25 @@ jobs:
           sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url = uri("https:\/\/jitpack.io") } /g' android/build.gradle.kts || true
           sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url = uri("https:\/\/jitpack.io") } /g' android/settings.gradle.kts || true
 
-      - name: Update Min SDK and Compile SDK
+      # ✨ الخطوة السحرية: تحديث Kotlin و compileSdk و AGP ✨
+      - name: Update Kotlin and Android SDK Versions
         run: |
-          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' android/app/build.gradle.kts || true
-          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 34/' android/app/build.gradle.kts || true
+          # تحديث إصدار Kotlin إلى 2.0.0 في ملف settings.gradle.kts
+          sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "2.0.0"/' android/settings.gradle.kts || true
+          
+          # تحديث إصدار AGP إلى 8.3.0
+          sed -i 's/id "com.android.application" version ".*"/id "com.android.application" version "8.3.0"/' android/settings.gradle.kts || true
+          
+          # تحديث إصدار Kotlin في build.gradle.kts (للمشاريع القديمة)
+          sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "2.0.0"/' android/build.gradle.kts || true
 
-      # ✨ الخطوة الجديدة لحل مشكلة إصدار Kotlin ✨
-      - name: Update Kotlin Version
-        run: |
-          # تحديث إصدار Kotlin في ملف build.gradle.kts
-          sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.22"/' android/build.gradle.kts || true
-          # تحديث إصدار Kotlin في ملف settings.gradle.kts إذا وجد
-          sed -i 's/org.jetbrains.kotlin.android.*version.*/org.jetbrains.kotlin.android" version "1.9.22"/' android/settings.gradle.kts || true
+          # تحديث compileSdk إلى 35
+          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 35/' android/app/build.gradle.kts || true
+          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 35/' android/app/build.gradle.kts || true
+          
+          # تحديث minSdk إلى 24 (متوافق مع compileSdk 35)
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 24/' android/app/build.gradle.kts || true
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 24/' android/app/build.gradle.kts || true
 
       - name: Disable Minify and Shrink Resources
         run: |
