@@ -82,7 +82,7 @@ class Meter {
   final String meterNo;
   final String? subscriber;
   final double prevReading;
-  final String status; // حالة العداد (جديد)
+  final String status;
   
   Meter({this.id, required this.streetId, required this.meterNo, this.subscriber, this.prevReading = 0, this.status = 'سليم'});
   
@@ -140,7 +140,7 @@ class DBHelper {
     final path = '${await getDatabasesPath()}/elec.db';
     return openDatabase(
       path,
-      version: 5, // تم رفع الإصدار إلى 5
+      version: 5,
       onCreate: (db, v) async {
         await db.execute('CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)');
         await db.execute('CREATE TABLE streets(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER DEFAULT 1, name TEXT, central_meter TEXT, central_prev REAL DEFAULT 0)');
@@ -313,7 +313,6 @@ class DBHelper {
       for (var e in readings.entries) {
         await txn.insert('readings', {'inspection_id': insId, 'meter_id': e.key, 'reading': e.value});
       }
-      // تحديث حالات العدادات
       for (var e in statuses.entries) {
         await txn.update('meters', {'status': e.value}, where: 'id = ?', whereArgs: [e.key]);
       }
@@ -328,7 +327,6 @@ class DBHelper {
       for (var e in readings.entries) {
         await txn.insert('readings', {'inspection_id': id, 'meter_id': e.key, 'reading': e.value});
       }
-      // تحديث حالات العدادات
       for (var e in statuses.entries) {
         await txn.update('meters', {'status': e.value}, where: 'id = ?', whereArgs: [e.key]);
       }
@@ -417,14 +415,13 @@ class Utils {
     return 'طبيعي';
   }
 
-  // دالة لإرجاع لون الحالة
   static Color getStatusColor(String status) {
     switch (status) {
       case 'طافي': return Colors.grey;
       case 'واقف': return Colors.orange;
       case 'خلل': return Colors.red;
       case 'مشكوك': return Colors.purple;
-      default: return Colors.green; // سليم
+      default: return Colors.green;
     }
   }
 }
@@ -896,7 +893,6 @@ class _MetersScreenState extends State<MetersScreen> {
                           children: [
                             Text('عداد ${m.meterNo}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: Utils.nameFontSize)),
                             const SizedBox(width: 8),
-                            // شريط حالة العداد
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(4)),
@@ -1145,7 +1141,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   
   Map<int, TextEditingController> currentReads = {};
   Map<int, double> previousReads = {};
-  Map<int, String> currentStatuses = {}; // لتخزين حالات العدادات أثناء الفحص
+  Map<int, String> currentStatuses = {};
   List<FocusNode> _focusNodes = [];
   
   double prevCentral = 0;
@@ -1184,7 +1180,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
     for (var m in widget.meters) {
       final prev = await DBHelper.instance.getPreviousReadingForMeter(m.id!, editing?.id, widget.street.id!);
       previousReads[m.id!] = prev;
-      currentStatuses[m.id!] = m.status; // جلب الحالة الحالية للعداد
+      currentStatuses[m.id!] = m.status;
       
       final initVal = existingReadings?[m.id!] ?? prev;
       String initStr = initVal % 1 == 0 ? initVal.toInt().toString() : initVal.toString();
@@ -1327,7 +1323,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
             return Card(
               margin: const EdgeInsets.symmetric(vertical: 4),
               shape: RoundedRectangleBorder(
-                side: BorderSide(color: statusColor.withOpacity(0.5), width: 1), // حدود الكارد تتلون حسب الحالة
+                side: BorderSide(color: statusColor.withOpacity(0.5), width: 1),
                 borderRadius: BorderRadius.circular(12)
               ),
               child: Padding(
@@ -1343,7 +1339,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                             children: [
                               Text('عداد ${m.meterNo}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: Utils.nameFontSize)),
                               const SizedBox(width: 6),
-                              // قائمة منسدلة لتغيير الحالة أثناء الفحص
                               Container(
                                 height: 30,
                                 padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -1418,7 +1413,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // معادلة العداد المركزي
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -1428,7 +1422,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
               ],
             ),
             const SizedBox(height: 4),
-            // معادلة العدادات الفرعية
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -1438,7 +1431,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
               ],
             ),
             const Divider(height: 16),
-            // الفاقد التقديري
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -1446,7 +1438,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                 Text('${Utils.n(loss)} (${lossPct.toStringAsFixed(1)}%)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: color)),
               ],
             ),
-            // تحذير في حال كان الفاقد عالي
             if (lossPct > 10) ...[
               const SizedBox(height: 8),
               Container(
@@ -1635,7 +1626,7 @@ class _StreetDashboardScreenState extends State<StreetDashboardScreen> {
         'id': m.id, 'meter_no': m.meterNo, 'subscriber': m.subscriber,
         'prev': prev, 'current': current,
         'consumption': current != null ? current - prev : null,
-        'status': m.status, // عرض الحالة
+        'status': m.status,
       });
     }
     
