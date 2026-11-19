@@ -31,19 +31,16 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      # الإصلاح الجديد: استخدام صيغة Kotlin DSL الصحيحة (url = uri)
       - name: Fix Gradle Repositories
         run: |
-          sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url "https:\/\/jitpack.io" } /g' android/build.gradle.kts || true
-          sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url "https:\/\/jitpack.io" } /g' android/settings.gradle.kts || true
+          sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url = uri("https:\/\/jitpack.io") } /g' android/build.gradle.kts || true
+          sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url = uri("https:\/\/jitpack.io") } /g' android/settings.gradle.kts || true
 
-      # هذا هو التعديل الجديد الذي يتعامل مع ملف build.gradle.kts
       - name: Set Min SDK Version to 23
         run: |
-          # استبدال قيمة minSdk الافتراضية بـ 23 في ملف build.gradle.kts
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' android/app/build.gradle.kts
-          # منع Flutter من تجاوز هذه القيمة لاحقاً
           sed -i 's/flutter.minSdkVersion = 23/flutter.minSdkVersion = 23/' android/app/build.gradle.kts || true
-          # التحقق من نجاح التعديل
           grep "minSdk" android/app/build.gradle.kts
 
       - name: Build APK
