@@ -3,8 +3,7 @@ name: Build APK
 on:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -24,47 +23,16 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          flutter-version: '3.22.0' # إصدار مستقر
+          flutter-version: '3.22.0'
 
-      # 1. إنشاء منصة الأندرويد
       - name: Create Android Platform
-        run: flutter create . --platforms=android
-
-      # 2. تنظيف المشروع قبل التثبيت (لحل مشاكل التخزين المؤقت)
-      - name: Clean Project
-        run: flutter clean
+        run: flutter create . --project-name electricity_audit --platforms=android
 
       - name: Install dependencies
         run: flutter pub get
 
-      # 3. إصلاح مستودعات Gradle (لضمان تحميل المكتبات)
-      - name: Fix Gradle Repositories
-        run: |
-          sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url = uri("https:\/\/jitpack.io") } /g' android/build.gradle.kts || true
-          sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url = uri("https:\/\/jitpack.io") } /g' android/settings.gradle.kts || true
-
-      # 4. إعدادات إضافية لـ Gradle
-      - name: Update Min SDK and Compile SDK
-        run: |
-          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' android/app/build.gradle.kts || true
-          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 34/' android/app/build.gradle.kts || true
-
-      # 5. إيقاف تصغير الكود لتجنب التعارض مع المكتبات
-      - name: Disable Minify and Shrink Resources
-        run: |
-          sed -i 's/isMinifyEnabled = true/isMinifyEnabled = false/g' android/app/build.gradle.kts || true
-          sed -i 's/minifyEnabled true/minifyEnabled false/g' android/app/build.gradle.kts || true
-          sed -i 's/shrinkResources true/shrinkResources false/g' android/app/build.gradle.kts || true
-
-      # 6. محاولة تجاوز التوقيع (إذا لم يكن لديك keystore)
-      - name: Bypass Signing Config
-        run: |
-          sed -i '/signingConfigs {/,/}/d' android/app/build.gradle.kts || true
-          sed -i 's/signingConfig = signingConfigs.getByName("debug")/signingConfig = signingConfigs.getByName("debug")/' android/app/build.gradle.kts || true
-
-      # 7. بناء الـ APK
       - name: Build APK
-        run: flutter build apk --release --no-shrink
+        run: flutter build apk --release
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
