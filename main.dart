@@ -82,16 +82,17 @@ class Meter {
   final String meterNo;
   final String? subscriber;
   final double prevReading;
+  final String status; // حالة العداد (جديد)
   
-  Meter({this.id, required this.streetId, required this.meterNo, this.subscriber, this.prevReading = 0});
+  Meter({this.id, required this.streetId, required this.meterNo, this.subscriber, this.prevReading = 0, this.status = 'سليم'});
   
   Map<String, dynamic> toMap() => {
-    'id': id, 'street_id': streetId, 'meter_no': meterNo, 'subscriber': subscriber, 'prev_reading': prevReading
+    'id': id, 'street_id': streetId, 'meter_no': meterNo, 'subscriber': subscriber, 'prev_reading': prevReading, 'status': status
   };
   
   factory Meter.fromMap(Map<String, dynamic> m) => Meter(
     id: m['id'], streetId: m['street_id'], meterNo: m['meter_no'], subscriber: m['subscriber'],
-    prevReading: (m['prev_reading'] as num?)?.toDouble() ?? 0.0
+    prevReading: (m['prev_reading'] as num?)?.toDouble() ?? 0.0, status: m['status'] ?? 'سليم'
   );
 }
 
@@ -139,11 +140,11 @@ class DBHelper {
     final path = '${await getDatabasesPath()}/elec.db';
     return openDatabase(
       path,
-      version: 4, 
+      version: 5, // تم رفع الإصدار إلى 5
       onCreate: (db, v) async {
         await db.execute('CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)');
         await db.execute('CREATE TABLE streets(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER DEFAULT 1, name TEXT, central_meter TEXT, central_prev REAL DEFAULT 0)');
-        await db.execute('CREATE TABLE meters(id INTEGER PRIMARY KEY AUTOINCREMENT, street_id INTEGER, meter_no TEXT, subscriber TEXT, prev_reading REAL DEFAULT 0)');
+        await db.execute('CREATE TABLE meters(id INTEGER PRIMARY KEY AUTOINCREMENT, street_id INTEGER, meter_no TEXT, subscriber TEXT, prev_reading REAL DEFAULT 0, status TEXT DEFAULT "سليم")');
         await db.execute('CREATE TABLE inspections(id INTEGER PRIMARY KEY AUTOINCREMENT, street_id INTEGER, period_type TEXT, start TEXT, end TEXT, central REAL, sub_total REAL, shared REAL, lighting REAL, loss REAL, loss_percent REAL)');
         await db.execute('CREATE TABLE readings(id INTEGER PRIMARY KEY AUTOINCREMENT, inspection_id INTEGER, meter_id INTEGER, reading REAL)');
         await db.insert('users', {'name': 'المدير'});
@@ -160,6 +161,9 @@ class DBHelper {
         }
         if (oldV < 4) {
           await db.execute('UPDATE streets SET user_id = 1 WHERE user_id IS NULL');
+        }
+        if (oldV < 5) {
+          try { await db.execute('ALTER TABLE meters ADD COLUMN status TEXT DEFAULT "سليم"'); } catch(_){}
         }
       }
     );
@@ -221,9 +225,9 @@ class DBHelper {
     return '${mx + 1}';
   }
 
-  Future<int> addMeter(int streetId, String no, String sub, double prevReading) async {
+  Future<int> addMeter(int streetId, String no, String sub, double prevReading, String status) async {
     final d = await db;
-    return d.insert('meters', {'street_id': streetId, 'meter_no': no, 'subscriber': sub, 'prev_reading': prevReading});
+    return d.insert('meters', {'street_id': streetId, 'meter_no': no, 'subscriber': sub, 'prev_reading': prevReading, 'status': status});
   }
 
   Future<int> updateMeter(Meter m) async {
@@ -302,23 +306,31 @@ class DBHelper {
     return 1;
   }
 
-  Future<void> saveInspection(Inspection ins, Map<int, double> readings) async {
+  Future<void> saveInspection(Inspection ins, Map<int, double> readings, Map<int, String> statuses) async {
     final d = await db;
     await d.transaction((txn) async {
       final insId = await txn.insert('inspections', ins.toMap());
       for (var e in readings.entries) {
         await txn.insert('readings', {'inspection_id': insId, 'meter_id': e.key, 'reading': e.value});
       }
+      // تحديث حالات العدادات
+      for (var e in statuses.entries) {
+        await txn.update('meters', {'status': e.value}, where: 'id = ?', whereArgs: [e.key]);
+      }
     });
   }
 
-  Future<void> updateInspection(int id, Inspection ins, Map<int, double> readings) async {
+  Future<void> updateInspection(int id, Inspection ins, Map<int, double> readings, Map<int, String> statuses) async {
     final d = await db;
     await d.transaction((txn) async {
       await txn.update('inspections', ins.toMap(), where: 'id = ?', whereArgs: [id]);
       await txn.delete('readings', where: 'inspection_id = ?', whereArgs: [id]);
       for (var e in readings.entries) {
         await txn.insert('readings', {'inspection_id': id, 'meter_id': e.key, 'reading': e.value});
+      }
+      // تحديث حالات العدادات
+      for (var e in statuses.entries) {
+        await txn.update('meters', {'status': e.value}, where: 'id = ?', whereArgs: [e.key]);
       }
     });
   }
@@ -404,20 +416,29 @@ class Utils {
     if (p > 10) return 'تحذير';
     return 'طبيعي';
   }
+
+  // دالة لإرجاع لون الحالة
+  static Color getStatusColor(String status) {
+    switch (status) {
+      case 'طافي': return Colors.grey;
+      case 'واقف': return Colors.orange;
+      case 'خلل': return Colors.red;
+      case 'مشكوك': return Colors.purple;
+      default: return Colors.green; // سليم
+    }
+  }
 }
 
 class EnglishNumberFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
     String text = newValue.text;
-    
     text = text.split('').map((c) {
       final code = c.codeUnitAt(0);
       if (code >= 0x0660 && code <= 0x0669) return String.fromCharCode(code - 0x0660 + 0x30);
       if (code >= 0x06F0 && code <= 0x06F9) return String.fromCharCode(code - 0x06F0 + 0x30);
       return c;
     }).join();
-    
     text = text.replaceAll(',', '');
 
     if (RegExp(r'^-?\d*\.?\d*$').hasMatch(text)) {
@@ -865,9 +886,24 @@ class _MetersScreenState extends State<MetersScreen> {
                     itemCount: filtered.length,
                     itemBuilder: (context, i) {
                       final m = filtered[i];
+                      final statusColor = Utils.getStatusColor(m.status);
                       return ListTile(
-                        leading: const CircleAvatar(child: Icon(Icons.speed)),
-                        title: Text('عداد ${m.meterNo}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: Utils.nameFontSize)),
+                        leading: CircleAvatar(
+                          backgroundColor: statusColor.withOpacity(0.2),
+                          child: Icon(Icons.speed, color: statusColor),
+                        ),
+                        title: Row(
+                          children: [
+                            Text('عداد ${m.meterNo}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: Utils.nameFontSize)),
+                            const SizedBox(width: 8),
+                            // شريط حالة العداد
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(4)),
+                              child: Text(m.status, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -944,43 +980,56 @@ class _MetersScreenState extends State<MetersScreen> {
     String autoNo = existing?.meterNo ?? await DBHelper.instance.nextMeterNo(widget.street.id!);
     final sub = TextEditingController(text: existing?.subscriber ?? '');
     final prev = TextEditingController(text: existing != null ? existing.prevReading.toString() : '0');
+    String selectedStatus = existing?.status ?? 'سليم';
     
     if (!parentContext.mounted) return;
     showDialog(
       context: parentContext, 
-      builder: (BuildContext ctx) => AlertDialog(
-      title: Text(existing == null ? 'إضافة عداد' : 'تعديل عداد'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: TextEditingController(text: autoNo),
-              readOnly: true,
-              decoration: const InputDecoration(labelText: 'رقم العداد (تلقائي)', filled: true, fillColor: Color(0xFFF0F0F0)),
+      builder: (BuildContext ctx) => StatefulBuilder(
+        builder: (context, setStateDialog) {
+          return AlertDialog(
+            title: Text(existing == null ? 'إضافة عداد' : 'تعديل عداد'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: TextEditingController(text: autoNo),
+                    readOnly: true,
+                    decoration: const InputDecoration(labelText: 'رقم العداد (تلقائي)', filled: true, fillColor: Color(0xFFF0F0F0)),
+                  ),
+                  TextField(controller: sub, decoration: const InputDecoration(labelText: 'اسم المشترك')),
+                  TextField(controller: prev, keyboardType: TextInputType.number, inputFormatters: [EnglishNumberFormatter()], decoration: const InputDecoration(labelText: 'القراءة السابقة للعداد')),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: selectedStatus,
+                    decoration: const InputDecoration(labelText: 'حالة العداد', border: OutlineInputBorder()),
+                    items: ['سليم', 'طافي', 'واقف', 'خلل', 'مشكوك'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                    onChanged: (val) => setStateDialog(() => selectedStatus = val!),
+                  ),
+                ],
+              ),
             ),
-            TextField(controller: sub, decoration: const InputDecoration(labelText: 'اسم المشترك')),
-            TextField(controller: prev, keyboardType: TextInputType.number, inputFormatters: [EnglishNumberFormatter()], decoration: const InputDecoration(labelText: 'القراءة السابقة للعداد')),
-          ],
-        ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+              ElevatedButton(
+                onPressed: () async {
+                  final pRead = double.tryParse(prev.text) ?? 0;
+                  if (existing == null) {
+                    await DBHelper.instance.addMeter(widget.street.id!, autoNo, sub.text, pRead, selectedStatus);
+                  } else {
+                    await DBHelper.instance.updateMeter(Meter(id: existing.id, streetId: widget.street.id!, meterNo: autoNo, subscriber: sub.text, prevReading: pRead, status: selectedStatus));
+                  }
+                  if (parentContext.mounted) Navigator.pop(ctx);
+                  _load();
+                },
+                child: const Text('حفظ'),
+              ),
+            ],
+          );
+        }
       ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
-        ElevatedButton(
-          onPressed: () async {
-            final pRead = double.tryParse(prev.text) ?? 0;
-            if (existing == null) {
-              await DBHelper.instance.addMeter(widget.street.id!, autoNo, sub.text, pRead);
-            } else {
-              await DBHelper.instance.updateMeter(Meter(id: existing.id, streetId: widget.street.id!, meterNo: autoNo, subscriber: sub.text, prevReading: pRead));
-            }
-            if (parentContext.mounted) Navigator.pop(ctx);
-            _load();
-          },
-          child: const Text('حفظ'),
-        ),
-      ],
-    ));
+    );
   }
 }
 
@@ -1096,6 +1145,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   
   Map<int, TextEditingController> currentReads = {};
   Map<int, double> previousReads = {};
+  Map<int, String> currentStatuses = {}; // لتخزين حالات العدادات أثناء الفحص
   List<FocusNode> _focusNodes = [];
   
   double prevCentral = 0;
@@ -1134,6 +1184,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
     for (var m in widget.meters) {
       final prev = await DBHelper.instance.getPreviousReadingForMeter(m.id!, editing?.id, widget.street.id!);
       previousReads[m.id!] = prev;
+      currentStatuses[m.id!] = m.status; // جلب الحالة الحالية للعداد
       
       final initVal = existingReadings?[m.id!] ?? prev;
       String initStr = initVal % 1 == 0 ? initVal.toInt().toString() : initVal.toString();
@@ -1185,7 +1236,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(isEditing ? 'تعديل فحص سابق' : 'فحص جديد (فوارق)')),
       body: ListView(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.only(top: 12, left: 12, right: 12, bottom: 250), 
         children: [
           Card(
             color: Colors.amber.shade50,
@@ -1270,8 +1321,15 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
             final consumption = currentVal - prev;
             Color consColor = consumption < 0 ? Colors.red : (consumption == 0 ? Colors.orange : Colors.green);
             
+            final currentStatus = currentStatuses[m.id!] ?? 'سليم';
+            final statusColor = Utils.getStatusColor(currentStatus);
+
             return Card(
               margin: const EdgeInsets.symmetric(vertical: 4),
+              shape: RoundedRectangleBorder(
+                side: BorderSide(color: statusColor.withOpacity(0.5), width: 1), // حدود الكارد تتلون حسب الحالة
+                borderRadius: BorderRadius.circular(12)
+              ),
               child: Padding(
                 padding: const EdgeInsets.all(10),
                 child: Row(
@@ -1281,7 +1339,37 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('عداد ${m.meterNo}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: Utils.nameFontSize)),
+                          Row(
+                            children: [
+                              Text('عداد ${m.meterNo}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: Utils.nameFontSize)),
+                              const SizedBox(width: 6),
+                              // قائمة منسدلة لتغيير الحالة أثناء الفحص
+                              Container(
+                                height: 30,
+                                padding: const EdgeInsets.symmetric(horizontal: 6),
+                                decoration: BoxDecoration(
+                                  color: statusColor.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: statusColor),
+                                ),
+                                child: DropdownButtonHideUnderline(
+                                  child: DropdownButton<String>(
+                                    value: currentStatus,
+                                    icon: Icon(Icons.arrow_drop_down, size: 16, color: statusColor),
+                                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: statusColor),
+                                    onChanged: (val) {
+                                      setState(() {
+                                        currentStatuses[m.id!] = val!;
+                                      });
+                                    },
+                                    items: ['سليم', 'طافي', 'واقف', 'خلل', 'مشكوك'].map((s) {
+                                      return DropdownMenuItem(value: s, child: Text(s));
+                                    }).toList(),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                           Text(m.subscriber ?? '—', style: TextStyle(fontSize: Utils.subFontSize, fontWeight: FontWeight.w600, color: Colors.black87)),
                           Text('السابقة: ${Utils.n(prev)}', style: const TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.bold)),
                           if (consumption != 0)
@@ -1318,11 +1406,10 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
               ),
             );
           }),
-          const SizedBox(height: 80),
         ],
       ),
       bottomNavigationBar: Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.only(top: 12, left: 12, right: 12, bottom: 60), 
         decoration: BoxDecoration(
           color: Colors.white,
           boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10)],
@@ -1331,29 +1418,27 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // معادلة العداد المركزي
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('إجمالي السابقة:', style: TextStyle(fontWeight: FontWeight.bold)),
-                Text(Utils.n(totalPrevReadings), style: const TextStyle(fontWeight: FontWeight.bold)),
+                const Text('المركزي (الحالي - السابق):', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blueGrey, fontSize: 13)),
+                Text('${Utils.n(currentCentral)} - ${Utils.n(prevCentral)} = ${Utils.n(centralDiff)}',
+                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue, fontSize: 14)),
               ],
             ),
+            const SizedBox(height: 4),
+            // معادلة العدادات الفرعية
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('إجمالي الحالية:', style: TextStyle(fontWeight: FontWeight.bold)),
-                Text(Utils.n(totalCurrentReadings), style: const TextStyle(fontWeight: FontWeight.bold)),
+                const Text('الفرعية (الحالي - السابق):', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blueGrey, fontSize: 13)),
+                Text('${Utils.n(totalCurrentReadings)} - ${Utils.n(totalPrevReadings)} = ${Utils.n(totalSubDiffs)}',
+                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.teal, fontSize: 14)),
               ],
             ),
-            const Divider(),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('الفرق (المحسوب):', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
-                Text(Utils.n(totalSubDiffs), style: TextStyle(fontWeight: FontWeight.bold, color: totalSubDiffs >= 0 ? Colors.blue : Colors.red)),
-              ],
-            ),
-            const SizedBox(height: 8),
+            const Divider(height: 16),
+            // الفاقد التقديري
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -1361,7 +1446,32 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                 Text('${Utils.n(loss)} (${lossPct.toStringAsFixed(1)}%)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: color)),
               ],
             ),
-            const SizedBox(height: 8),
+            // تحذير في حال كان الفاقد عالي
+            if (lossPct > 10) ...[
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red.shade300),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'تحذير: نسبة الفاقد مرتفعة جداً (${lossPct.toStringAsFixed(1)}%)!',
+                        style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 minimumSize: const Size.fromHeight(45), 
@@ -1375,9 +1485,9 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                 final rMap = {for (var e in currentReads.entries) e.key: double.tryParse(e.value.text) ?? 0};
                 
                 if (isEditing) {
-                  await DBHelper.instance.updateInspection(widget.existingInspection!.id!, ins, rMap);
+                  await DBHelper.instance.updateInspection(widget.existingInspection!.id!, ins, rMap, currentStatuses);
                 } else {
-                  await DBHelper.instance.saveInspection(ins, rMap);
+                  await DBHelper.instance.saveInspection(ins, rMap, currentStatuses);
                 }
                 
                 if (mounted) Navigator.pop(context);
@@ -1422,6 +1532,7 @@ class _MeterHistoryScreenState extends State<MeterHistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final statusColor = Utils.getStatusColor(widget.meter.status);
     return Scaffold(
       appBar: AppBar(title: Text('عداد ${widget.meter.meterNo}')),
       body: loading
@@ -1432,7 +1543,16 @@ class _MeterHistoryScreenState extends State<MeterHistoryScreen> {
                 Card(
                   color: Colors.green.shade50,
                   child: ListTile(
-                    title: Text(widget.meter.subscriber ?? '—', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                    title: Row(
+                      children: [
+                        Text(widget.meter.subscriber ?? '—', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                        const SizedBox(width: 8),
+                        Chip(
+                          label: Text(widget.meter.status, style: const TextStyle(color: Colors.white, fontSize: 10)),
+                          backgroundColor: statusColor,
+                        ),
+                      ],
+                    ),
                     subtitle: Text('السابقة الأولية: ${Utils.n(widget.meter.prevReading)}'),
                   ),
                 ),
@@ -1515,6 +1635,7 @@ class _StreetDashboardScreenState extends State<StreetDashboardScreen> {
         'id': m.id, 'meter_no': m.meterNo, 'subscriber': m.subscriber,
         'prev': prev, 'current': current,
         'consumption': current != null ? current - prev : null,
+        'status': m.status, // عرض الحالة
       });
     }
     
@@ -1587,6 +1708,7 @@ class _StreetDashboardScreenState extends State<StreetDashboardScreen> {
           const SizedBox(height: 8),
           ...meters.map((m) {
             final cons = m['consumption'] as double?;
+            final statusColor = Utils.getStatusColor(m['status'] as String);
             Color c = Colors.grey;
             if (cons != null) {
               if (cons < 0) c = Colors.red;
@@ -1598,10 +1720,20 @@ class _StreetDashboardScreenState extends State<StreetDashboardScreen> {
               child: ListTile(
                 dense: true,
                 leading: CircleAvatar(
-                  backgroundColor: c.withOpacity(0.2),
-                  child: Text(m['meter_no'].toString(), style: TextStyle(color: c, fontWeight: FontWeight.bold, fontSize: 12)),
+                  backgroundColor: statusColor.withOpacity(0.2),
+                  child: Text(m['meter_no'].toString(), style: TextStyle(color: statusColor, fontWeight: FontWeight.bold, fontSize: 12)),
                 ),
-                title: Text(m['subscriber'] ?? '—', style: TextStyle(fontSize: Utils.subFontSize, fontWeight: FontWeight.w600)),
+                title: Row(
+                  children: [
+                    Text(m['subscriber'] ?? '—', style: TextStyle(fontSize: Utils.subFontSize, fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                      decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(4)),
+                      child: Text(m['status'], style: const TextStyle(color: Colors.white, fontSize: 9)),
+                    ),
+                  ],
+                ),
                 subtitle: Text('${Utils.n(m['prev'])} → ${m['current'] != null ? Utils.n(m['current']) : "لم يُقرأ"}', style: const TextStyle(fontSize: 11)),
                 trailing: cons == null ? const Text('—') : Text(Utils.n(cons), style: TextStyle(fontWeight: FontWeight.bold, color: c, fontSize: 15)),
               ),
