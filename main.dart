@@ -23,7 +23,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'مراجعة الكهرباء',
+      title: 'AZ',
       debugShowCheckedModeBanner: false,
       locale: const Locale('ar'),
       supportedLocales: const [Locale('ar')],
@@ -196,7 +196,6 @@ class DBHelper {
     return d.update('streets', s.toMap(), where: 'id = ?', whereArgs: [s.id]);
   }
 
-  // حذف متسلسل للشارع (يمسح كل شيء مرتبط به)
   Future<int> deleteStreet(int id) async {
     final d = await db;
     await d.transaction((txn) async {
@@ -237,7 +236,6 @@ class DBHelper {
     return d.delete('meters', where: 'id = ?', whereArgs: [id]);
   }
 
-  // جلب القراءة السابقة للعداد بناءً على الفحص الذي يسبقه
   Future<double> getPreviousReadingForMeter(int meterId, int? beforeInspectionId, int streetId) async {
     final d = await db;
     List<Map<String, dynamic>> res;
@@ -258,12 +256,10 @@ class DBHelper {
     }
     if (res.isNotEmpty) return (res.first['reading'] as num).toDouble();
     
-    // إذا لم يوجد فحص سابق، نأخذ القراءة الأساسية للعداد
     final m = await d.query('meters', where: 'id = ?', whereArgs: [meterId]);
     return (m.first['prev_reading'] as num?)?.toDouble() ?? 0;
   }
 
-  // جلب المركزية السابقة بناءً على الفحص الذي يسبقه
   Future<double> getPreviousCentral(int streetId, int? beforeInspectionId) async {
     final d = await db;
     List<Map<String, dynamic>> res;
@@ -306,7 +302,6 @@ class DBHelper {
     return 1;
   }
 
-  // حفظ فحص جديد
   Future<void> saveInspection(Inspection ins, Map<int, double> readings) async {
     final d = await db;
     await d.transaction((txn) async {
@@ -317,7 +312,6 @@ class DBHelper {
     });
   }
 
-  // تعديل فحص سابق
   Future<void> updateInspection(int id, Inspection ins, Map<int, double> readings) async {
     final d = await db;
     await d.transaction((txn) async {
@@ -335,7 +329,6 @@ class DBHelper {
     return res.map(Inspection.fromMap).toList();
   }
 
-  // جلب تاريخ قراءات عداد معين
   Future<List<Map<String, dynamic>>> getMeterReadings(int meterId) async {
     final d = await db;
     return d.rawQuery('''
@@ -375,7 +368,6 @@ class DBHelper {
       for (var row in data['inspections']) { await txn.insert('inspections', Map<String, dynamic>.from(row)); }
       for (var row in data['readings']) { await txn.insert('readings', Map<String, dynamic>.from(row)); }
       
-      // إعادة ضبط التسلسل التلقائي
       for (final t in ['users', 'streets', 'meters', 'inspections', 'readings']) {
         final maxId = Sqflite.firstIntValue(await txn.rawQuery('SELECT MAX(id) FROM $t')) ?? 0;
         await txn.rawDelete('DELETE FROM sqlite_sequence WHERE name = ?', [t]);
@@ -414,16 +406,21 @@ class Utils {
   }
 }
 
-class ArabicNumberFormatter extends TextInputFormatter {
+// محول يمنع الأرقام العربية ويجبر الإنجليزية فقط
+class EnglishNumberFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
     String text = newValue.text;
+    
+    // تحويل فوري للأرقام العربية إذا تم إدخالها
     text = text.split('').map((c) {
       final code = c.codeUnitAt(0);
       if (code >= 0x0660 && code <= 0x0669) return String.fromCharCode(code - 0x0660 + 0x30);
       if (code >= 0x06F0 && code <= 0x06F9) return String.fromCharCode(code - 0x06F0 + 0x30);
       return c;
     }).join();
+    
+    // منع الفاصلة
     text = text.replaceAll(',', '');
 
     if (RegExp(r'^-?\d*\.?\d*$').hasMatch(text)) {
@@ -501,7 +498,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final dir = await getTemporaryDirectory();
       final file = File('${dir.path}/elec_backup.json');
       await file.writeAsString(jsonStr);
-      await Share.shareXFiles([XFile(file.path)], text: 'نسخة احتياطية لتطبيق مراجعة الكهرباء');
+      await Share.shareXFiles([XFile(file.path)], text: 'نسخة احتياطية لتطبيق AZ');
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));
     }
@@ -530,7 +527,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('محطة العاصمة'), 
+        title: const Text('AZ'), 
         backgroundColor: Colors.green.shade100,
         actions: [
           PopupMenuButton<User>(
@@ -783,7 +780,7 @@ class _StreetsScreenState extends State<StreetsScreen> {
           children: [
             TextField(controller: name, decoration: const InputDecoration(labelText: 'اسم الشارع')),
             TextField(controller: cen, decoration: const InputDecoration(labelText: 'رقم العداد المركزي')),
-            TextField(controller: cenPrev, keyboardType: TextInputType.number, inputFormatters: [ArabicNumberFormatter()], decoration: const InputDecoration(labelText: 'القراءة المركزية السابقة')),
+            TextField(controller: cenPrev, keyboardType: TextInputType.number, inputFormatters: [EnglishNumberFormatter()], decoration: const InputDecoration(labelText: 'القراءة المركزية السابقة')),
           ],
         ),
       ),
@@ -966,7 +963,7 @@ class _MetersScreenState extends State<MetersScreen> {
               decoration: const InputDecoration(labelText: 'رقم العداد (تلقائي)', filled: true, fillColor: Color(0xFFF0F0F0)),
             ),
             TextField(controller: sub, decoration: const InputDecoration(labelText: 'اسم المشترك')),
-            TextField(controller: prev, keyboardType: TextInputType.number, inputFormatters: [ArabicNumberFormatter()], decoration: const InputDecoration(labelText: 'القراءة السابقة للعداد')),
+            TextField(controller: prev, keyboardType: TextInputType.number, inputFormatters: [EnglishNumberFormatter()], decoration: const InputDecoration(labelText: 'القراءة السابقة للعداد')),
           ],
         ),
       ),
@@ -1126,7 +1123,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   void _preload() async {
     final editing = widget.existingInspection;
     
-    // جلب المركزية السابقة بناءً على الفحص السابق
     prevCentral = await DBHelper.instance.getPreviousCentral(widget.street.id!, editing?.id);
 
     Map<int, double>? existingReadings;
@@ -1143,7 +1139,6 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
       previousReads[m.id!] = prev;
       
       final initVal = existingReadings?[m.id!] ?? prev;
-      // هنا السر: وضع الرقم كـ String بدون فواصل إطلاقاً
       String initStr = initVal % 1 == 0 ? initVal.toInt().toString() : initVal.toString();
       
       currentReads[m.id!] = TextEditingController(text: initStr);
@@ -1187,7 +1182,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
     if (isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
     
     final color = Utils.riskColor(lossPct);
-    final dateStr = DateFormat('yyyy-MM-dd').format(selectedDate);
+    final dateStr = DateFormat('yyyy-MM-dd', 'en').format(selectedDate);
     bool isCentralValid = currentCentral >= prevCentral;
     
     return Scaffold(
@@ -1228,7 +1223,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                   TextField(
                     controller: central, 
                     keyboardType: TextInputType.number, 
-                    inputFormatters: [ArabicNumberFormatter()],
+                    inputFormatters: [EnglishNumberFormatter()],
                     textInputAction: TextInputAction.next,
                     decoration: InputDecoration(
                       labelText: 'القراءة المركزية الحالية (الكلي)', 
@@ -1244,7 +1239,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                         child: TextField(
                           controller: shared, 
                           keyboardType: TextInputType.number, 
-                          inputFormatters: [ArabicNumberFormatter()],
+                          inputFormatters: [EnglishNumberFormatter()],
                           textInputAction: TextInputAction.next,
                           decoration: const InputDecoration(labelText: 'أحمال مشتركة (للفترة)'), 
                           onChanged: (_) => setState((){}),
@@ -1255,7 +1250,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                         child: TextField(
                           controller: lighting, 
                           keyboardType: TextInputType.number, 
-                          inputFormatters: [ArabicNumberFormatter()],
+                          inputFormatters: [EnglishNumberFormatter()],
                           textInputAction: TextInputAction.next,
                           decoration: const InputDecoration(labelText: 'إنارة (للفترة)'), 
                           onChanged: (_) => setState((){}),
@@ -1303,7 +1298,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                         controller: currentReads[m.id!],
                         focusNode: _focusNodes[index],
                         keyboardType: TextInputType.number,
-                        inputFormatters: [ArabicNumberFormatter()],
+                        inputFormatters: [EnglishNumberFormatter()],
                         textInputAction: index == widget.meters.length - 1 ? TextInputAction.done : TextInputAction.next,
                         onSubmitted: (_) {
                           if (index < widget.meters.length - 1) {
@@ -1643,7 +1638,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   void _shareReport(Inspection ins) {
     final text = '''
-📊 تقرير فحص كهرباء - محطة العاصمة
+📊 تقرير فحص كهرباء - AZ
 📅 التاريخ: ${ins.end}
 ----------------------------
 ⚡ القراءة المركزية: ${Utils.n(ins.central)}
@@ -1704,7 +1699,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
       pageFormat: PdfPageFormat.a4,
       textDirection: pw.TextDirection.rtl,
       build: (ctx) => [
-        pw.Header(level: 0, text: 'محطة العاصمة - التقرير النهائي'),
+        pw.Header(level: 0, text: 'AZ - التقرير النهائي'),
         pw.SizedBox(height: 10),
         pw.TableHelper.fromTextArray(
           headers: ['الفترة', 'المركزي', 'الفرعية', 'الفاقد', 'النسبة', 'الحالة'],
