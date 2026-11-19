@@ -33,9 +33,14 @@ jobs:
 
       - name: Fix Gradle Repositories
         run: |
-          # إضافة مستودع جوجل و Maven Central لحل مشكلة javawriter
           sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url "https:\/\/jitpack.io" } /g' android/build.gradle || true
           sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url "https:\/\/jitpack.io" } /g' android/settings.gradle || true
+
+      # هذا هو السطر الجديد الذي يحل مشكلة minSdkVersion
+      - name: Set Min SDK Version to 23
+        run: |
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' android/app/build.gradle
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle || true
 
       - name: Build APK
         run: flutter build apk --release
