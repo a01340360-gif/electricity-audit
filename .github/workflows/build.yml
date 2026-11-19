@@ -2,18 +2,20 @@ name: Build APK
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v3
         with:
           distribution: 'zulu'
           java-version: '17'
@@ -21,23 +23,19 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.27.1'
           channel: 'stable'
 
       - name: Prepare Project
-        run: |
-          cd /tmp
-          flutter create --org com.alasema --project-name electricity_audit --platforms android temp_app
-          
-          cp -r /tmp/temp_app/android $GITHUB_WORKSPACE/
-          cp /tmp/temp_app/.metadata $GITHUB_WORKSPACE/ 2>/dev/null || true
-          
-          cd $GITHUB_WORKSPACE
-          mkdir -p lib
-          if [ -f "main.dart" ]; then mv main.dart lib/main.dart; fi
+        run: flutter create . --project-name electricity_audit
 
       - name: Install dependencies
         run: flutter pub get
+
+      - name: Fix Gradle Repositories
+        run: |
+          # إضافة مستودع جوجل و Maven Central لحل مشكلة javawriter
+          sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url "https:\/\/jitpack.io" } /g' android/build.gradle || true
+          sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url "https:\/\/jitpack.io" } /g' android/settings.gradle || true
 
       - name: Build APK
         run: flutter build apk --release
@@ -45,6 +43,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: electricity-audit-apk
+          name: app-release
           path: build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 30
