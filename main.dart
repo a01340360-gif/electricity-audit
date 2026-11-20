@@ -507,6 +507,61 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // دالة عرض نافذة التعليمات
+  void _showInstructionsDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: const [
+            Icon(Icons.support_agent, color: Colors.blue, size: 30),
+            SizedBox(width: 8),
+            Text('Assistance', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('تعليمات الاستخدام', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold, fontSize: 16)),
+                const Divider(color: Colors.blue),
+                const SizedBox(height: 8),
+                _buildInstructionStep('1', 'أضف الشوارع والعدادات من زر "إدارة الشوارع والعدادات".'),
+                _buildInstructionStep('2', 'اضغط على أي شارع لبدء عملية "فحص جديد".'),
+                _buildInstructionStep('3', 'أدخل القراءات الحالية لكل عداد، وسيقوم النظام بحساب الفاقد تلقائياً.'),
+                _buildInstructionStep('4', 'يمكنك تغيير حالة العداد (سليم، طافي، خلل...) من القائمة المنسدلة بجانب كل عداد.'),
+                _buildInstructionStep('5', 'لعرض النتائج السابقة أو تعديلها، اضغط على أيقونة الساعة (سجل الفحوصات) أعلى شاشة العدادات.'),
+                _buildInstructionStep('6', 'احفظ نسخة احتياطية من الشاشة الرئيسية قبل عمل أي تحديثات.'),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إخفاء', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold, fontSize: 16)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInstructionStep(String number, String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(number, style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text, style: const TextStyle(fontSize: 14, height: 1.4))),
+        ],
+      ),
+    );
+  }
+
   void _backup() async {
     try {
       final jsonStr = await DBHelper.instance.backupData();
@@ -545,6 +600,12 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('AZ'), 
         backgroundColor: Colors.green.shade100,
         actions: [
+          // زر التعليمات الجديد
+          IconButton(
+            icon: const Icon(Icons.help_outline, color: Colors.blue),
+            tooltip: 'تعليمات الاستخدام',
+            onPressed: _showInstructionsDialog,
+          ),
           PopupMenuButton<User>(
             icon: const Icon(Icons.person),
             tooltip: 'تبديل المستخدم',
