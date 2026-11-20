@@ -28,13 +28,12 @@ jobs:
       - name: Create Android platform
         run: flutter create . --project-name electricity_audit --platforms=android
 
-      # main.dart موجود في جذر المستودع، وFlutter يتوقعه داخل lib/
       - name: Place app entry point
         run: |
           mkdir -p lib
           cp main.dart lib/main.dart
 
-      # تحديث ملفات Gradle التي ينشئها Flutter بصيغة Groovy (.gradle)
+      # Update both modern plugin declarations and legacy buildscript classpaths.
       - name: Configure Android Gradle versions
         shell: bash
         run: |
@@ -43,14 +42,16 @@ jobs:
           import re
           import sys
 
-          settings = Path("android/settings.gradle")
-          app_gradle = Path("android/app/build.gradle")
-          wrapper = Path("android/gradle/wrapper/gradle-wrapper.properties")
+          android = Path("android")
+          settings = android / "settings.gradle"
+          app_gradle = android / "app/build.gradle"
+          wrapper = android / "gradle/wrapper/gradle-wrapper.properties"
 
           for file in (settings, app_gradle, wrapper):
               if not file.exists():
-                  sys.exit(f"Required file was not generated: {file}")
+                  sys.exit(f"Required generated file is missing: {file}")
 
+          # Modern Flutter projects declare plugin versions in settings.gradle.
           settings_text = settings.read_text()
 
           settings_text, agp_count = re.subn(
@@ -65,49 +66,82 @@ jobs:
           )
 
           if agp_count == 0:
-              sys.exit("Could not find the Android Gradle Plugin version in settings.gradle")
+              sys.exit("Android application plugin version was not found in android/settings.gradle")
           if kotlin_count == 0:
-              sys.exit("Could not find the Kotlin Android plugin version in settings.gradle")
+              sys.exit("Kotlin Android plugin version was not found in android/settings.gradle")
 
           settings.write_text(settings_text)
 
-          app_text = app_gradle.read_text()
+          # Also update legacy classpath declarations anywhere under android/.
+          # This catches an old AGP 7.3.0 reference that settings.gradle alone
+          # does not override.
+          gradle_files = list(android.rglob("*.gradle")) + list(android.rglob("*.gradle.kts"))
+          legacy_agp_hits = 0
+          legacy_kotlin_hits = 0
 
+          for file in gradle_files:
+              text = file.read_text()
+              text, count = re.subn(
+                  r'(com\.android\.tools\.build:gradle:)[0-9][^\'"\s)]*',
+                  r'\g<1>8.6.0',
+                  text,
+              )
+              legacy_agp_hits += count
+
+              text, count = re.subn(
+                  r'(org\.jetbrains\.kotlin:kotlin-gradle-plugin:)[0-9][^\'"\s)]*',
+                  r'\g<1>2.0.20',
+                  text,
+              )
+              legacy_kotlin_hits += count
+              file.write_text(text)
+
+          # Set SDK values in the app module.
+          app_text = app_gradle.read_text()
           app_text, compile_count = re.subn(
               r'(compileSdk(?:Version)?\s*=?\s*)flutter\.compileSdkVersion',
               r'\g<1>35',
               app_text,
           )
+          if compile_count == 0:
+              sys.exit("flutter.compileSdkVersion was not found in android/app/build.gradle")
+
           app_text, min_count = re.subn(
               r'(minSdk(?:Version)?\s*=?\s*)flutter\.minSdkVersion',
               r'\g<1>21',
               app_text,
           )
-
-          if compile_count == 0:
-              sys.exit("Could not find flutter.compileSdkVersion in android/app/build.gradle")
           if min_count == 0:
-              sys.exit("Could not find flutter.minSdkVersion in android/app/build.gradle")
+              sys.exit("flutter.minSdkVersion was not found in android/app/build.gradle")
 
           app_gradle.write_text(app_text)
 
+          # Gradle 8.7 is compatible with Android Gradle Plugin 8.6.0.
           wrapper_text = wrapper.read_text()
           wrapper_text, wrapper_count = re.subn(
               r'(?m)^(distributionUrl=).*gradle-[^/]+-(?:all|bin)\.zip$',
               lambda match: match.group(1) + r'https\://services.gradle.org/distributions/gradle-8.7-all.zip',
               wrapper_text,
           )
-
           if wrapper_count == 0:
-              sys.exit("Could not find distributionUrl in gradle-wrapper.properties")
-
+              sys.exit("distributionUrl was not found in gradle-wrapper.properties")
           wrapper.write_text(wrapper_text)
+
+          # Stop the build early if the old AGP version remains anywhere.
+          remaining = []
+          for file in gradle_files:
+              if re.search(r'com\.android\.tools\.build:gradle:7\.3\.0', file.read_text()):
+                  remaining.append(str(file))
+          if remaining:
+              sys.exit("Old Android Gradle Plugin 7.3.0 remains in: " + ", ".join(remaining))
 
           print("Android Gradle Plugin: 8.6.0")
           print("Kotlin Gradle Plugin: 2.0.20")
           print("compileSdk: 35")
           print("minSdk: 21")
           print("Gradle Wrapper: 8.7")
+          print(f"Legacy AGP declarations updated: {legacy_agp_hits}")
+          print(f"Legacy Kotlin declarations updated: {legacy_kotlin_hits}")
           PY
 
       - name: Install dependencies
