@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
 
 jobs:
@@ -16,47 +16,102 @@ jobs:
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: '17'
+          distribution: zulu
+          java-version: "17"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
-          flutter-version: '3.24.0'
+          channel: stable
+          flutter-version: "3.24.0"
 
-      - name: Create Android Platform
+      - name: Create Android platform
         run: flutter create . --project-name electricity_audit --platforms=android
+
+      # main.dart موجود في جذر المستودع، وFlutter يتوقعه داخل lib/
+      - name: Place app entry point
+        run: |
+          mkdir -p lib
+          cp main.dart lib/main.dart
+
+      # تحديث ملفات Gradle التي ينشئها Flutter بصيغة Groovy (.gradle)
+      - name: Configure Android Gradle versions
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          settings = Path("android/settings.gradle")
+          app_gradle = Path("android/app/build.gradle")
+          wrapper = Path("android/gradle/wrapper/gradle-wrapper.properties")
+
+          for file in (settings, app_gradle, wrapper):
+              if not file.exists():
+                  sys.exit(f"Required file was not generated: {file}")
+
+          settings_text = settings.read_text()
+
+          settings_text, agp_count = re.subn(
+              r'(id\s+["\']com\.android\.application["\']\s+version\s+["\'])[^"\']+(["\'])',
+              r'\g<1>8.6.0\g<2>',
+              settings_text,
+          )
+          settings_text, kotlin_count = re.subn(
+              r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']\s+version\s+["\'])[^"\']+(["\'])',
+              r'\g<1>2.0.20\g<2>',
+              settings_text,
+          )
+
+          if agp_count == 0:
+              sys.exit("Could not find the Android Gradle Plugin version in settings.gradle")
+          if kotlin_count == 0:
+              sys.exit("Could not find the Kotlin Android plugin version in settings.gradle")
+
+          settings.write_text(settings_text)
+
+          app_text = app_gradle.read_text()
+
+          app_text, compile_count = re.subn(
+              r'(compileSdk(?:Version)?\s*=?\s*)flutter\.compileSdkVersion',
+              r'\g<1>35',
+              app_text,
+          )
+          app_text, min_count = re.subn(
+              r'(minSdk(?:Version)?\s*=?\s*)flutter\.minSdkVersion',
+              r'\g<1>21',
+              app_text,
+          )
+
+          if compile_count == 0:
+              sys.exit("Could not find flutter.compileSdkVersion in android/app/build.gradle")
+          if min_count == 0:
+              sys.exit("Could not find flutter.minSdkVersion in android/app/build.gradle")
+
+          app_gradle.write_text(app_text)
+
+          wrapper_text = wrapper.read_text()
+          wrapper_text, wrapper_count = re.subn(
+              r'(?m)^(distributionUrl=).*gradle-[^/]+-(?:all|bin)\.zip$',
+              lambda match: match.group(1) + r'https\://services.gradle.org/distributions/gradle-8.7-all.zip',
+              wrapper_text,
+          )
+
+          if wrapper_count == 0:
+              sys.exit("Could not find distributionUrl in gradle-wrapper.properties")
+
+          wrapper.write_text(wrapper_text)
+
+          print("Android Gradle Plugin: 8.6.0")
+          print("Kotlin Gradle Plugin: 2.0.20")
+          print("compileSdk: 35")
+          print("minSdk: 21")
+          print("Gradle Wrapper: 8.7")
+          PY
 
       - name: Install dependencies
         run: flutter pub get
-
-      - name: Fix Gradle Repositories
-        run: |
-          sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url = uri("https:\/\/jitpack.io") } /g' android/build.gradle.kts || true
-          sed -i 's/repositories {/repositories { google(); mavenCentral(); maven { url = uri("https:\/\/jitpack.io") } /g' android/settings.gradle.kts || true
-
-      # ✨ التعديل الجوهري: ضبط إصدارات Kotlin و AGP بشكل متوافق ✨
-      - name: Set Compatible Kotlin and AGP Versions
-        run: |
-          sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "2.0.20"/' android/settings.gradle.kts || true
-          sed -i 's/id "com.android.application" version ".*"/id "com.android.application" version "8.1.1"/' android/settings.gradle.kts || true
-
-      - name: Update Min and Compile SDK
-        run: |
-          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 21/' android/app/build.gradle.kts || true
-          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 35/' android/app/build.gradle.kts || true
-
-      - name: Disable Minify and Shrink Resources
-        run: |
-          sed -i 's/isMinifyEnabled = true/isMinifyEnabled = false/g' android/app/build.gradle.kts || true
-          sed -i 's/minifyEnabled true/minifyEnabled false/g' android/app/build.gradle.kts || true
-          sed -i 's/shrinkResources true/shrinkResources false/g' android/app/build.gradle.kts || true
-
-      # ✨ إجبار Gradle Wrapper على استخدام إصدار متوافق ✨
-      - name: Set Gradle Wrapper Version
-        run: |
-          sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.1.1-all.zip|' android/gradle/wrapper/gradle-wrapper.properties || true
 
       - name: Build APK
         run: flutter build apk --release --no-shrink
@@ -66,3 +121,4 @@ jobs:
         with:
           name: app-release
           path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
