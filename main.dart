@@ -23,7 +23,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'AZ',
+      title: 'فحص الكهرباء',
       debugShowCheckedModeBanner: false,
       locale: const Locale('ar'),
       supportedLocales: const [Locale('ar')],
@@ -568,7 +568,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final dir = await getTemporaryDirectory();
       final file = File('${dir.path}/elec_backup.json');
       await file.writeAsString(jsonStr);
-      await Share.shareXFiles([XFile(file.path)], text: 'نسخة احتياطية لتطبيق AZ');
+      await Share.shareXFiles([XFile(file.path)], text: 'نسخة احتياطية لتطبيق فحص الكهرباء');
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));
     }
@@ -597,7 +597,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('AZ'), 
+        title: const Text('فحص الكهرباء'), 
         backgroundColor: Colors.green.shade100,
         actions: [
           // زر التعليمات الجديد
@@ -703,7 +703,7 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 40),
           const Center(
             child: Text(
-              'تم صناعة هذا البرنامج بواسطة:\nعبدالله الزبيري\nDeepSeek مع Claude\nواشراف\nهيثم الابيض',
+              'تم عمل وصناعة هذا البرنامج بواسطة :\nعبدالله الزبيري\n777704402\nمحطة العاصمة باور',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold),
             ),
@@ -1819,7 +1819,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   void _shareReport(Inspection ins) {
     final text = '''
-📊 تقرير فحص كهرباء - AZ
+📊 تقرير فحص الكهرباء
 📅 التاريخ: ${ins.end}
 ----------------------------
 ⚡ القراءة المركزية: ${Utils.n(ins.central)}
@@ -1880,7 +1880,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
       pageFormat: PdfPageFormat.a4,
       textDirection: pw.TextDirection.rtl,
       build: (ctx) => [
-        pw.Header(level: 0, text: 'AZ - التقرير النهائي'),
+        pw.Header(level: 0, text: 'فحص الكهرباء - التقرير النهائي'),
         pw.SizedBox(height: 10),
         pw.TableHelper.fromTextArray(
           headers: ['الفترة', 'المركزي', 'الفرعية', 'الفاقد', 'النسبة', 'الحالة'],
@@ -1890,7 +1890,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ),
         pw.SizedBox(height: 20),
         pw.Text(
-          'تم صناعة هذا البرنامج بواسطة:\nعبدالله الزبيري\nDeepSeek مع Claude\nواشراف هيثم الابيض', 
+          'تم عمل وصناعة هذا البرنامج بواسطة :\nعبدالله الزبيري\n777704402\nمحطة العاصمة باور', 
           style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
           textAlign: pw.TextAlign.center,
         ),
