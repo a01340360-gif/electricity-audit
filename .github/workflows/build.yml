@@ -28,6 +28,33 @@ jobs:
       - name: Create Android platform
         run: flutter create . --project-name electricity_audit --platforms=android
 
+      - name: Set Android app display name
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          if not manifest.exists():
+              sys.exit(f"Android manifest not found: {manifest}")
+
+          text = manifest.read_text(encoding="utf-8")
+          updated, count = re.subn(
+              r'android:label="[^"]*"',
+              'android:label="فحص الكهرباء"',
+              text,
+              count=1,
+          )
+
+          if count != 1:
+              sys.exit("Could not find android:label in AndroidManifest.xml")
+
+          manifest.write_text(updated, encoding="utf-8")
+          print("Android app display name set to: فحص الكهرباء")
+          PY
+
       - name: Place app entry point
         run: |
           mkdir -p lib
@@ -73,8 +100,6 @@ jobs:
           settings.write_text(settings_text)
 
           # Also update legacy classpath declarations anywhere under android/.
-          # This catches an old AGP 7.3.0 reference that settings.gradle alone
-          # does not override.
           gradle_files = list(android.rglob("*.gradle")) + list(android.rglob("*.gradle.kts"))
           legacy_agp_hits = 0
           legacy_kotlin_hits = 0
