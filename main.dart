@@ -1923,7 +1923,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         'القراءة المركزية السابقة', 'القراءة المركزية الحالية', 'استهلاك المركزي',
         'استهلاك الفرعية', 'الأحمال المشتركة', 'الإنارة', 'الفاقد kWh',
         'نسبة الفاقد %', 'الحالة'
-      ].map((value) => TextCellValue(value)));
+      ].map((value) => TextCellValue(value)).toList());
       for (final ins in list) {
         final d = await _reportData(ins);
         sheet.appendRow([
@@ -1937,7 +1937,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         sheet.appendRow([TextCellValue('تفاصيل العدادات للمربع ${d['street']} - ${ins.end}')]);
         sheet.appendRow([
           'رقم العداد', 'اسم المشترك', 'القراءة السابقة', 'القراءة الحالية', 'الاستهلاك'
-        ].map((value) => TextCellValue(value)));
+        ].map((value) => TextCellValue(value)).toList());
         for (final m in d['meters'] as List<Map<String, dynamic>>) {
           sheet.appendRow([
             TextCellValue('${m['number']}'), TextCellValue('${m['subscriber']}'),
