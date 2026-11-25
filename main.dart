@@ -339,8 +339,17 @@ class DBHelper {
     return res.map(Inspection.fromMap).toList();
   }
 
-  Future<List<Map<String, dynamic>>> getMeterReadings(int meterId) async {
+  Future<List<Map<String, dynamic>>> getMeterReadings(int meterId, {int? beforeInspectionId}) async {
     final d = await db;
+    if (beforeInspectionId != null) {
+      return d.rawQuery('''
+        SELECT r.reading, i.end AS inspection_date, i.id AS inspection_id
+        FROM readings r
+        INNER JOIN inspections i ON r.inspection_id = i.id
+        WHERE r.meter_id = ? AND i.id < ?
+        ORDER BY i.id ASC
+      ''', [meterId, beforeInspectionId]);
+    }
     return d.rawQuery('''
       SELECT r.reading, i.end AS inspection_date, i.id AS inspection_id
       FROM readings r
@@ -363,7 +372,39 @@ class DBHelper {
   }
 
   Future<void> restoreData(String jsonString) async {
-    final data = jsonDecode(jsonString);
+    final decoded = jsonDecode(jsonString);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('ملف النسخة الاحتياطية غير صالح.');
+    }
+    final data = decoded;
+    const requiredTables = ['users', 'streets', 'meters', 'inspections', 'readings'];
+    for (final table in requiredTables) {
+      final rows = data[table];
+      if (rows is! List || rows.any((row) => row is! Map)) {
+        throw FormatException('بيانات جدول $table مفقودة أو غير صالحة.');
+      }
+    }
+    // Check references and required numeric fields before touching the live database.
+    final streetIds = data['streets'].map<int>((r) => (r['id'] as num).toInt()).toSet();
+    final meterIds = data['meters'].map<int>((r) => (r['id'] as num).toInt()).toSet();
+    final inspectionIds = data['inspections'].map<int>((r) => (r['id'] as num).toInt()).toSet();
+    for (final row in data['meters']) {
+      if (!streetIds.contains((row['street_id'] as num?)?.toInt())) {
+        throw const FormatException('يوجد عداد مرتبط بمربع غير موجود.');
+      }
+    }
+    for (final row in data['inspections']) {
+      if (!streetIds.contains((row['street_id'] as num?)?.toInt())) {
+        throw const FormatException('يوجد فحص مرتبط بمربع غير موجود.');
+      }
+    }
+    for (final row in data['readings']) {
+      if (!meterIds.contains((row['meter_id'] as num?)?.toInt()) ||
+          !inspectionIds.contains((row['inspection_id'] as num?)?.toInt()) ||
+          row['reading'] is! num) {
+        throw const FormatException('يوجد سجل قراءة غير مرتبط أو غير صالح.');
+      }
+    }
     final d = await db;
     await d.transaction((txn) async {
       await txn.delete('readings');
@@ -396,6 +437,8 @@ class Utils {
   
   static const double nameFontSize = 16;
   static const double subFontSize = 13;
+  // حد تغير الاستهلاك الذي يستدعي المراجعة (يمكن جعله إعدادًا من واجهة التطبيق لاحقًا).
+  static const double meterChangeWarningPercent = 30.0;
   
   static Color riskColor(double p) {
     if (p < 0) return Colors.grey;
@@ -421,6 +464,7 @@ class Utils {
       case 'واقف': return Colors.orange;
       case 'خلل': return Colors.red;
       case 'مشكوك': return Colors.purple;
+      case 'غير كافٍ للمقارنة': return Colors.blueGrey;
       default: return Colors.green;
     }
   }
@@ -1243,7 +1287,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
       final prev = await DBHelper.instance.getPreviousReadingForMeter(m.id!, editing?.id, widget.street.id!);
       previousReads[m.id!] = prev;
       // احسب استهلاك الفترة السابقة من آخر قراءتين محفوظتين لهذا العداد.
-      final history = await DBHelper.instance.getMeterReadings(m.id!);
+      final history = await DBHelper.instance.getMeterReadings(m.id!, beforeInspectionId: editing?.id);
       if (history.length >= 2) {
         final last = (history[history.length - 1]['reading'] as num).toDouble();
         final beforeLast = (history[history.length - 2]['reading'] as num).toDouble();
@@ -1280,9 +1324,10 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
 
   String automaticStatus(int meterId, double consumption) {
     final baseline = previousPeriodConsumption[meterId];
-    if (baseline == null || baseline <= 0 || consumption < 0) return consumption < 0 ? 'مشكوك' : 'سليم';
+    if (consumption < 0) return 'مشكوك';
+    if (baseline == null || baseline <= 0) return 'غير كافٍ للمقارنة';
     final changePct = ((consumption - baseline).abs() / baseline) * 100;
-    return changePct > 30 ? 'مشكوك' : 'سليم';
+    return changePct > Utils.meterChangeWarningPercent ? 'مشكوك' : 'سليم';
   }
 
   Future<void> _pickDate() async {
@@ -1543,9 +1588,28 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                 backgroundColor: color
               ),
               onPressed: () async {
+                final centralValue = double.tryParse(central.text);
+                final sharedValue = double.tryParse(shared.text);
+                final lightingValue = double.tryParse(lighting.text);
+                if (centralValue == null || sharedValue == null || lightingValue == null ||
+                    centralValue < prevCentral || sharedValue < 0 || lightingValue < 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('راجع القراءات: يجب أن تكون أرقامًا صحيحة وألا تقل القراءة المركزية عن السابقة.')),
+                  );
+                  return;
+                }
+                for (final meter in widget.meters) {
+                  final value = double.tryParse(currentReads[meter.id!]!.text);
+                  if (value == null || value < (previousReads[meter.id!] ?? 0)) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('راجع قراءة العداد ${meter.meterNo}: القراءة الحالية غير صالحة أو أقل من السابقة.')),
+                    );
+                    return;
+                  }
+                }
                 final ins = Inspection(
                   streetId: widget.street.id!, periodType: 'custom', start: dateStr, end: dateStr,
-                  central: currentCentral, subTotal: totalSubDiffs, shared: sharedVal, lighting: lightingVal, loss: loss, lossPercent: lossPct,
+                  central: centralValue, subTotal: totalSubDiffs, shared: sharedValue, lighting: lightingValue, loss: loss, lossPercent: lossPct,
                 );
                 final rMap = {for (var e in currentReads.entries) e.key: double.tryParse(e.value.text) ?? 0};
                 
@@ -1961,6 +2025,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   Future<void> _exportPdf() async {
     try {
+      final arabicFont = await PdfGoogleFonts.notoNaskhArabicRegular();
+      final arabicBoldFont = await PdfGoogleFonts.notoNaskhArabicBold();
       final doc = pw.Document();
       final reportWidgets = <pw.Widget>[];
       for (final ins in list) {
@@ -1993,7 +2059,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ]);
       }
       reportWidgets.add(pw.Center(child: pw.Text('تم عمل وصناعة هذا البرنامج بواسطة: عبدالله الزبيري | 777704402 | محطة العاصمة باور')));
-      doc.addPage(pw.MultiPage(pageFormat: PdfPageFormat.a4, textDirection: pw.TextDirection.rtl, build: (_) => reportWidgets));
+      doc.addPage(pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        textDirection: pw.TextDirection.rtl,
+        theme: pw.ThemeData.withFont(base: arabicFont, bold: arabicBoldFont),
+        build: (_) => reportWidgets,
+      ));
       await Printing.layoutPdf(onLayout: (_) async => doc.save());
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ في إنشاء PDF: $e')));
