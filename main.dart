@@ -1818,99 +1818,185 @@ class ReportsScreen extends StatefulWidget {
 
 class _ReportsScreenState extends State<ReportsScreen> {
   List<Inspection> list = [];
-  
+  bool loading = true;
+
   @override
   void initState() {
     super.initState();
     _load();
   }
-  
-  void _load() async {
-    list = await DBHelper.instance.getAllInspections();
-    setState(() {});
+
+  Future<void> _load() async {
+    final rows = await DBHelper.instance.getAllInspections();
+    if (!mounted) return;
+    setState(() { list = rows; loading = false; });
   }
 
-  void _shareReport(Inspection ins) {
-    final text = '''
-📊 تقرير فحص الكهرباء
-📅 التاريخ: ${ins.end}
-----------------------------
-⚡ القراءة المركزية: ${Utils.n(ins.central)}
-🔌 مجموع فوارق العدادات: ${Utils.n(ins.subTotal)}
-🏢 أحمال مشتركة: ${Utils.n(ins.shared)}
-💡 إنارة: ${Utils.n(ins.lighting)}
-----------------------------
-🚨 الفاقد: ${Utils.n(ins.loss)}
-📉 النسبة: ${ins.lossPercent.toStringAsFixed(2)}%
-⚠️ الحالة: ${Utils.riskName(ins.lossPercent)}
-    ''';
-    Share.share(text);
+  // يجمع بيانات المربع والمستخدم والعدادات وقراءاتها للفحص المحدد.
+  Future<Map<String, dynamic>> _reportData(Inspection ins) async {
+    final db = await DBHelper.instance.db;
+    final streetRows = await db.query('streets', where: 'id = ?', whereArgs: [ins.streetId], limit: 1);
+    final street = streetRows.isEmpty ? <String, dynamic>{} : streetRows.first;
+    final userRows = street['user_id'] == null
+        ? <Map<String, dynamic>>[]
+        : await db.query('users', where: 'id = ?', whereArgs: [street['user_id']], limit: 1);
+    final meters = await DBHelper.instance.getMeters(ins.streetId);
+    final readings = await DBHelper.instance.getInspectionReadings(ins.id!);
+    final previousCentral = await DBHelper.instance.getPreviousCentral(ins.streetId, ins.id);
+    final meterRows = <Map<String, dynamic>>[];
+    double previousTotal = 0;
+    double currentTotal = 0;
+    for (final meter in meters) {
+      final previous = await DBHelper.instance.getPreviousReadingForMeter(meter.id!, ins.id, ins.streetId);
+      final current = readings[meter.id!];
+      previousTotal += previous;
+      if (current != null) currentTotal += current;
+      meterRows.add({
+        'number': meter.meterNo,
+        'subscriber': meter.subscriber ?? '—',
+        'previous': previous,
+        'current': current,
+        'consumption': current == null ? null : current - previous,
+      });
+    }
+    return {
+      'street': street['name'] ?? 'غير محدد',
+      'user': userRows.isEmpty ? 'غير محدد' : (userRows.first['name'] ?? 'غير محدد'),
+      'centralMeter': street['central_meter'] ?? '—',
+      'centralPrevious': previousCentral,
+      'centralCurrent': ins.central,
+      'centralConsumption': ins.central - previousCentral,
+      'meters': meterRows,
+      'previousTotal': previousTotal,
+      'currentTotal': currentTotal,
+    };
   }
 
-  void _exportExcel() async {
+  String _reportText(Inspection ins, Map<String, dynamic> d) {
+    final b = StringBuffer();
+    b.writeln('تقرير فحص الكهرباء');
+    b.writeln('اسم المربع: ${d['street']}');
+    b.writeln('المسؤول: ${d['user']}');
+    b.writeln('رقم العداد المركزي: ${d['centralMeter']}');
+    b.writeln('تاريخ بداية الفترة: ${ins.start}');
+    b.writeln('تاريخ نهاية الفترة: ${ins.end}');
+    b.writeln('نوع الفترة: ${ins.periodType}');
+    b.writeln('--------------------------------');
+    b.writeln('العداد المركزي:');
+    b.writeln('السابق: ${Utils.n(d['centralPrevious'])}');
+    b.writeln('الحالي: ${Utils.n(d['centralCurrent'])}');
+    b.writeln('الاستهلاك: ${Utils.n(d['centralConsumption'])} كيلوواط ساعة');
+    b.writeln('--------------------------------');
+    b.writeln('العدادات الفرعية:');
+    for (final m in d['meters'] as List<Map<String, dynamic>>) {
+      b.writeln('عداد ${m['number']} | المشترك: ${m['subscriber']}');
+      b.writeln('السابق: ${Utils.n(m['previous'])} | الحالي: ${m['current'] == null ? 'غير مسجل' : Utils.n(m['current'])} | الاستهلاك: ${m['consumption'] == null ? '—' : Utils.n(m['consumption'])}');
+    }
+    b.writeln('مجموع القراءات السابقة: ${Utils.n(d['previousTotal'])}');
+    b.writeln('مجموع القراءات الحالية: ${Utils.n(d['currentTotal'])}');
+    b.writeln('استهلاك العدادات الفرعية: ${Utils.n(ins.subTotal)}');
+    b.writeln('الأحمال المشتركة: ${Utils.n(ins.shared)}');
+    b.writeln('الإنارة: ${Utils.n(ins.lighting)}');
+    b.writeln('--------------------------------');
+    b.writeln('الفاقد: ${Utils.n(ins.loss)} كيلوواط ساعة');
+    b.writeln('نسبة الفاقد: ${ins.lossPercent.toStringAsFixed(2)}%');
+    b.writeln('الحالة: ${Utils.riskName(ins.lossPercent)}');
+    if (ins.lossPercent > 10) b.writeln('تنبيه: نسبة الفاقد تجاوزت الحد المسموح (10%). يلزم مراجعة القراءات والتوصيلات.');
+    return b.toString();
+  }
+
+  Future<void> _shareReport(Inspection ins) async {
     try {
-      var excel = Excel.createExcel();
-      Sheet sheetObject = excel['النتائج'];
-      
-      sheetObject.appendRow([
-        TextCellValue('التاريخ'),
-        TextCellValue('المركزي'),
-        TextCellValue('الفرعية'),
-        TextCellValue('الأحمال'),
-        TextCellValue('الإنارة'),
-        TextCellValue('الفاقد'),
-        TextCellValue('النسبة %'),
-        TextCellValue('الحالة'),
-      ]);
-
-      for (var ins in list) {
-        sheetObject.appendRow([
-          TextCellValue(ins.end),
-          DoubleCellValue(ins.central),
-          DoubleCellValue(ins.subTotal),
-          DoubleCellValue(ins.shared),
-          DoubleCellValue(ins.lighting),
-          DoubleCellValue(ins.loss),
-          DoubleCellValue(ins.lossPercent),
-          TextCellValue(Utils.riskName(ins.lossPercent)),
-        ]);
-      }
-
-      var fileBytes = excel.save();
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/excel_report.xlsx');
-      await file.writeAsBytes(fileBytes!);
-      
-      await Share.shareXFiles([XFile(file.path)], text: 'تقرير فحص الكهرباء (Excel)');
+      final data = await _reportData(ins);
+      await Share.share(_reportText(ins, data));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ في التصدير: $e')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر تجهيز التقرير: $e')));
     }
   }
 
-  void _exportPdf() async {
-    final doc = pw.Document();
-    doc.addPage(pw.MultiPage(
-      pageFormat: PdfPageFormat.a4,
-      textDirection: pw.TextDirection.rtl,
-      build: (ctx) => [
-        pw.Header(level: 0, text: 'فحص الكهرباء - التقرير النهائي'),
-        pw.SizedBox(height: 10),
-        pw.TableHelper.fromTextArray(
-          headers: ['الفترة', 'المركزي', 'الفرعية', 'الفاقد', 'النسبة', 'الحالة'],
-          data: list.map((i) => [
-            i.end, Utils.n(i.central), Utils.n(i.subTotal), Utils.n(i.loss), '${i.lossPercent.toStringAsFixed(1)}%', Utils.riskName(i.lossPercent)
-          ]).toList(),
-        ),
-        pw.SizedBox(height: 20),
-        pw.Text(
-          'تم عمل وصناعة هذا البرنامج بواسطة :\nعبدالله الزبيري\n777704402\nمحطة العاصمة باور', 
-          style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
-          textAlign: pw.TextAlign.center,
-        ),
-      ],
-    ));
-    await Printing.layoutPdf(onLayout: (f) async => doc.save());
+  Future<void> _exportExcel() async {
+    try {
+      final excel = Excel.createExcel();
+      final sheet = excel['التقرير التفصيلي'];
+      sheet.appendRow(['اسم المربع', 'المسؤول', 'رقم المركزي', 'من تاريخ', 'إلى تاريخ', 'القراءة المركزية السابقة', 'القراءة المركزية الحالية', 'استهلاك المركزي', 'استهلاك الفرعية', 'الأحمال المشتركة', 'الإنارة', 'الفاقد kWh', 'نسبة الفاقد %', 'الحالة']);
+      for (final ins in list) {
+        final d = await _reportData(ins);
+        sheet.appendRow([
+          TextCellValue('${d['street']}'), TextCellValue('${d['user']}'), TextCellValue('${d['centralMeter']}'),
+          TextCellValue(ins.start), TextCellValue(ins.end),
+          DoubleCellValue(d['centralPrevious'] as double), DoubleCellValue(ins.central),
+          DoubleCellValue(d['centralConsumption'] as double), DoubleCellValue(ins.subTotal),
+          DoubleCellValue(ins.shared), DoubleCellValue(ins.lighting), DoubleCellValue(ins.loss),
+          DoubleCellValue(ins.lossPercent), TextCellValue(Utils.riskName(ins.lossPercent)),
+        ]);
+        sheet.appendRow(['تفاصيل العدادات للمربع ${d['street']} - ${ins.end}']);
+        sheet.appendRow(['رقم العداد', 'اسم المشترك', 'القراءة السابقة', 'القراءة الحالية', 'الاستهلاك']);
+        for (final m in d['meters'] as List<Map<String, dynamic>>) {
+          sheet.appendRow([
+            TextCellValue('${m['number']}'), TextCellValue('${m['subscriber']}'),
+            DoubleCellValue(m['previous'] as double),
+            m['current'] == null ? TextCellValue('غير مسجل') : DoubleCellValue(m['current'] as double),
+            m['consumption'] == null ? TextCellValue('—') : DoubleCellValue(m['consumption'] as double),
+          ]);
+        }
+        sheet.appendRow([]);
+      }
+      final bytes = excel.save();
+      if (bytes == null) throw Exception('لم يتم إنشاء ملف Excel');
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/electricity_detailed_report.xlsx');
+      await file.writeAsBytes(bytes, flush: true);
+      await Share.shareXFiles([XFile(file.path)], text: 'تقرير فحص الكهرباء التفصيلي');
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ في تصدير Excel: $e')));
+    }
   }
+
+  Future<void> _exportPdf() async {
+    try {
+      final doc = pw.Document();
+      final reportWidgets = <pw.Widget>[];
+      for (final ins in list) {
+        final d = await _reportData(ins);
+        reportWidgets.addAll([
+          pw.Header(level: 0, text: 'تقرير فحص الكهرباء'),
+          pw.Text('اسم المربع: ${d['street']}'),
+          pw.Text('المسؤول: ${d['user']}'),
+          pw.Text('رقم العداد المركزي: ${d['centralMeter']}'),
+          pw.Text('الفترة: ${ins.start} إلى ${ins.end}'),
+          pw.SizedBox(height: 8),
+          pw.Text('العداد المركزي: السابق ${Utils.n(d['centralPrevious'])} | الحالي ${Utils.n(ins.central)} | الاستهلاك ${Utils.n(d['centralConsumption'])} kWh'),
+          pw.Text('العدادات الفرعية: مجموع السابق ${Utils.n(d['previousTotal'])} | مجموع الحالي ${Utils.n(d['currentTotal'])} | الاستهلاك ${Utils.n(ins.subTotal)} kWh'),
+          pw.TableHelper.fromTextArray(
+            headers: ['رقم العداد', 'المشترك', 'السابق', 'الحالي', 'الاستهلاك'],
+            data: (d['meters'] as List<Map<String, dynamic>>).map((m) => [
+              '${m['number']}', '${m['subscriber']}', Utils.n(m['previous']),
+              m['current'] == null ? '—' : Utils.n(m['current']),
+              m['consumption'] == null ? '—' : Utils.n(m['consumption']),
+            ]).toList(),
+          ),
+          pw.SizedBox(height: 8),
+          pw.Text('الأحمال المشتركة: ${Utils.n(ins.shared)} kWh'),
+          pw.Text('الإنارة: ${Utils.n(ins.lighting)} kWh'),
+          pw.Text('الفاقد: ${Utils.n(ins.loss)} kWh (${ins.lossPercent.toStringAsFixed(2)}%)'),
+          pw.Text('الحالة: ${Utils.riskName(ins.lossPercent)}'),
+          if (ins.lossPercent > 10) pw.Text('تحذير: الفاقد تجاوز 10% ويجب مراجعة بيانات الفحص.'),
+          pw.Divider(),
+          pw.SizedBox(height: 14),
+        ]);
+      }
+      reportWidgets.add(pw.Center(child: pw.Text('تم عمل وصناعة هذا البرنامج بواسطة: عبدالله الزبيري | 777704402 | محطة العاصمة باور')));
+      doc.addPage(pw.MultiPage(pageFormat: PdfPageFormat.a4, textDirection: pw.TextDirection.rtl, build: (_) => reportWidgets));
+      await Printing.layoutPdf(onLayout: (_) async => doc.save());
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ في إنشاء PDF: $e')));
+    }
+  }
+
+  Widget _detailLine(String label, String value, {Color? color}) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 3),
+    child: Row(children: [Expanded(child: Text(label)), Text(value, style: TextStyle(fontWeight: FontWeight.bold, color: color))]),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -1918,35 +2004,67 @@ class _ReportsScreenState extends State<ReportsScreen> {
       appBar: AppBar(
         title: const Text('النتيجة النهائية'),
         actions: [
-          IconButton(onPressed: _exportExcel, icon: const Icon(Icons.table_view, color: Colors.green)),
-          IconButton(onPressed: _exportPdf, icon: const Icon(Icons.picture_as_pdf)),
+          IconButton(onPressed: list.isEmpty ? null : _exportExcel, icon: const Icon(Icons.table_view, color: Colors.green)),
+          IconButton(onPressed: list.isEmpty ? null : _exportPdf, icon: const Icon(Icons.picture_as_pdf)),
         ],
       ),
-      body: list.isEmpty 
-          ? const Center(child: Text('لا توجد فحوصات'))
-          : ListView.builder(
-              itemCount: list.length,
-              itemBuilder: (context, i) {
-                final ins = list[i];
-                final color = Utils.riskColor(ins.lossPercent);
-                return Card(
-                  child: ListTile(
-                    title: Text('الفترة: ${ins.end}'),
-                    subtitle: Text('الفاقد: ${Utils.n(ins.loss)} (${ins.lossPercent.toStringAsFixed(1)}%)'),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Chip(label: Text(Utils.riskName(ins.lossPercent), style: const TextStyle(fontSize: 10, color: Colors.white)), backgroundColor: color),
-                        IconButton(
-                          icon: const Icon(Icons.share, color: Colors.blue),
-                          onPressed: () => _shareReport(ins),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : list.isEmpty
+              ? const Center(child: Text('لا توجد فحوصات'))
+              : ListView.builder(
+                  padding: const EdgeInsets.all(8),
+                  itemCount: list.length,
+                  itemBuilder: (context, i) {
+                    final ins = list[i];
+                    final color = Utils.riskColor(ins.lossPercent);
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      child: ExpansionTile(
+                        title: Text('الفترة: ${ins.start} إلى ${ins.end}', textDirection: TextDirection.rtl),
+                        subtitle: Text('الفاقد: ${Utils.n(ins.loss)} kWh (${ins.lossPercent.toStringAsFixed(2)}%)'),
+                        trailing: Chip(label: Text(Utils.riskName(ins.lossPercent), style: const TextStyle(fontSize: 10, color: Colors.white)), backgroundColor: color),
+                        children: [
+                          FutureBuilder<Map<String, dynamic>>(
+                            future: _reportData(ins),
+                            builder: (context, snapshot) {
+                              if (!snapshot.hasData) return const Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator());
+                              final d = snapshot.data!;
+                              return Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                                  _detailLine('اسم المربع:', '${d['street']}'),
+                                  _detailLine('المسؤول:', '${d['user']}'),
+                                  _detailLine('رقم العداد المركزي:', '${d['centralMeter']}'),
+                                  const Divider(),
+                                  _detailLine('المركزي السابق:', Utils.n(d['centralPrevious'])),
+                                  _detailLine('المركزي الحالي:', Utils.n(ins.central)),
+                                  _detailLine('استهلاك المركزي:', '${Utils.n(d['centralConsumption'])} kWh'),
+                                  _detailLine('مجموع استهلاك العدادات الفرعية:', '${Utils.n(ins.subTotal)} kWh'),
+                                  _detailLine('الأحمال المشتركة:', '${Utils.n(ins.shared)} kWh'),
+                                  _detailLine('الإنارة:', '${Utils.n(ins.lighting)} kWh'),
+                                  const Divider(),
+                                  const Text('تفاصيل العدادات الفرعية', style: TextStyle(fontWeight: FontWeight.bold)),
+                                  ...(d['meters'] as List<Map<String, dynamic>>).map((m) => ListTile(
+                                    dense: true,
+                                    title: Text('عداد ${m['number']} - ${m['subscriber']}'),
+                                    subtitle: Text('السابق: ${Utils.n(m['previous'])} | الحالي: ${m['current'] == null ? 'غير مسجل' : Utils.n(m['current'])}'),
+                                    trailing: Text(m['consumption'] == null ? '—' : Utils.n(m['consumption']), style: const TextStyle(fontWeight: FontWeight.bold)),
+                                  )),
+                                  const Divider(),
+                                  _detailLine('الفاقد:', '${Utils.n(ins.loss)} kWh', color: color),
+                                  _detailLine('نسبة الفاقد:', '${ins.lossPercent.toStringAsFixed(2)}%', color: color),
+                                  if (ins.lossPercent > 10) const Text('تحذير: نسبة الفاقد تجاوزت 10%، راجع القراءات والعدادات.', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                                  Align(alignment: Alignment.centerLeft, child: IconButton(icon: const Icon(Icons.share, color: Colors.blue), onPressed: () => _shareReport(ins))),
+                                ]),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
     );
   }
 }
