@@ -1203,6 +1203,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   Map<int, TextEditingController> currentReads = {};
   Map<int, double> previousReads = {};
   Map<int, String> currentStatuses = {};
+  Map<int, double> previousPeriodConsumption = {};
   List<FocusNode> _focusNodes = [];
   
   double prevCentral = 0;
@@ -1241,6 +1242,13 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
     for (var m in widget.meters) {
       final prev = await DBHelper.instance.getPreviousReadingForMeter(m.id!, editing?.id, widget.street.id!);
       previousReads[m.id!] = prev;
+      // احسب استهلاك الفترة السابقة من آخر قراءتين محفوظتين لهذا العداد.
+      final history = await DBHelper.instance.getMeterReadings(m.id!);
+      if (history.length >= 2) {
+        final last = (history[history.length - 1]['reading'] as num).toDouble();
+        final beforeLast = (history[history.length - 2]['reading'] as num).toDouble();
+        previousPeriodConsumption[m.id!] = last - beforeLast;
+      }
       currentStatuses[m.id!] = m.status;
       
       final initVal = existingReadings?[m.id!] ?? prev;
@@ -1269,6 +1277,13 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
   double get totalSubDiffs => totalCurrentReadings - totalPrevReadings;
   double get loss => centralDiff - (totalSubDiffs + sharedVal + lightingVal);
   double get lossPct => centralDiff > 0 ? (loss / centralDiff) * 100 : 0;
+
+  String automaticStatus(int meterId, double consumption) {
+    final baseline = previousPeriodConsumption[meterId];
+    if (baseline == null || baseline <= 0 || consumption < 0) return consumption < 0 ? 'مشكوك' : 'سليم';
+    final changePct = ((consumption - baseline).abs() / baseline) * 100;
+    return changePct > 30 ? 'مشكوك' : 'سليم';
+  }
 
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
@@ -1378,7 +1393,9 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
             final consumption = currentVal - prev;
             Color consColor = consumption < 0 ? Colors.red : (consumption == 0 ? Colors.orange : Colors.green);
             
-            final currentStatus = currentStatuses[m.id!] ?? 'سليم';
+            final currentStatus = automaticStatus(m.id!, consumption);
+            currentStatuses[m.id!] = currentStatus;
+            final baseline = previousPeriodConsumption[m.id!];
             final statusColor = Utils.getStatusColor(currentStatus);
 
             return Card(
@@ -1408,19 +1425,10 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                                   borderRadius: BorderRadius.circular(6),
                                   border: Border.all(color: statusColor),
                                 ),
-                                child: DropdownButtonHideUnderline(
-                                  child: DropdownButton<String>(
-                                    value: currentStatus,
-                                    icon: Icon(Icons.arrow_drop_down, size: 16, color: statusColor),
-                                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: statusColor),
-                                    onChanged: (val) {
-                                      setState(() {
-                                        currentStatuses[m.id!] = val!;
-                                      });
-                                    },
-                                    items: ['سليم', 'طافي', 'واقف', 'خلل', 'مشكوك'].map((s) {
-                                      return DropdownMenuItem(value: s, child: Text(s));
-                                    }).toList(),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 7),
+                                  child: Center(
+                                    child: Text(currentStatus, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: statusColor)),
                                   ),
                                 ),
                               ),
@@ -1428,6 +1436,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                           ),
                           Text(m.subscriber ?? '—', style: TextStyle(fontSize: Utils.subFontSize, fontWeight: FontWeight.w600, color: Colors.black87)),
                           Text('السابقة: ${Utils.n(prev)}', style: const TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.bold)),
+                          Text('استهلاك الفترة السابقة: ${baseline == null ? 'لا توجد مقارنة كافية' : Utils.n(baseline)}', style: const TextStyle(fontSize: 10, color: Colors.blueGrey)),
                           if (consumption != 0)
                             Text('الاستهلاك: ${Utils.n(consumption)}', style: TextStyle(fontSize: 11, color: consColor, fontWeight: FontWeight.bold)),
                         ],
@@ -1438,6 +1447,10 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                       child: TextField(
                         controller: currentReads[m.id!],
                         focusNode: _focusNodes[index],
+                        onTap: () {
+                          final c = currentReads[m.id!]!;
+                          c.selection = TextSelection(baseOffset: 0, extentOffset: c.text.length);
+                        },
                         keyboardType: TextInputType.number,
                         inputFormatters: [EnglishNumberFormatter()],
                         textInputAction: index == widget.meters.length - 1 ? TextInputAction.done : TextInputAction.next,
@@ -1527,9 +1540,9 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 minimumSize: const Size.fromHeight(45), 
-                backgroundColor: isCentralValid ? color : Colors.grey
+                backgroundColor: color
               ),
-              onPressed: isCentralValid ? () async {
+              onPressed: () async {
                 final ins = Inspection(
                   streetId: widget.street.id!, periodType: 'custom', start: dateStr, end: dateStr,
                   central: currentCentral, subTotal: totalSubDiffs, shared: sharedVal, lighting: lightingVal, loss: loss, lossPercent: lossPct,
@@ -1543,7 +1556,7 @@ class _NewInspectionScreenState extends State<NewInspectionScreen> {
                 }
                 
                 if (mounted) Navigator.pop(context);
-              } : null,
+              },
               child: Text(isEditing ? 'حفظ التعديلات' : 'حفظ الفحص', style: const TextStyle(color: Colors.white, fontSize: 16)),
             ),
           ],
