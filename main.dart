@@ -1918,7 +1918,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
     try {
       final excel = Excel.createExcel();
       final sheet = excel['التقرير التفصيلي'];
-      sheet.appendRow(['اسم المربع', 'المسؤول', 'رقم المركزي', 'من تاريخ', 'إلى تاريخ', 'القراءة المركزية السابقة', 'القراءة المركزية الحالية', 'استهلاك المركزي', 'استهلاك الفرعية', 'الأحمال المشتركة', 'الإنارة', 'الفاقد kWh', 'نسبة الفاقد %', 'الحالة']);
+      sheet.appendRow([
+        'اسم المربع', 'المسؤول', 'رقم المركزي', 'من تاريخ', 'إلى تاريخ',
+        'القراءة المركزية السابقة', 'القراءة المركزية الحالية', 'استهلاك المركزي',
+        'استهلاك الفرعية', 'الأحمال المشتركة', 'الإنارة', 'الفاقد kWh',
+        'نسبة الفاقد %', 'الحالة'
+      ].map((value) => TextCellValue(value)));
       for (final ins in list) {
         final d = await _reportData(ins);
         sheet.appendRow([
@@ -1929,8 +1934,10 @@ class _ReportsScreenState extends State<ReportsScreen> {
           DoubleCellValue(ins.shared), DoubleCellValue(ins.lighting), DoubleCellValue(ins.loss),
           DoubleCellValue(ins.lossPercent), TextCellValue(Utils.riskName(ins.lossPercent)),
         ]);
-        sheet.appendRow(['تفاصيل العدادات للمربع ${d['street']} - ${ins.end}']);
-        sheet.appendRow(['رقم العداد', 'اسم المشترك', 'القراءة السابقة', 'القراءة الحالية', 'الاستهلاك']);
+        sheet.appendRow([TextCellValue('تفاصيل العدادات للمربع ${d['street']} - ${ins.end}')]);
+        sheet.appendRow([
+          'رقم العداد', 'اسم المشترك', 'القراءة السابقة', 'القراءة الحالية', 'الاستهلاك'
+        ].map((value) => TextCellValue(value)));
         for (final m in d['meters'] as List<Map<String, dynamic>>) {
           sheet.appendRow([
             TextCellValue('${m['number']}'), TextCellValue('${m['subscriber']}'),
@@ -2021,7 +2028,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     return Card(
                       margin: const EdgeInsets.only(bottom: 10),
                       child: ExpansionTile(
-                        title: Text('الفترة: ${ins.start} إلى ${ins.end}', textDirection: TextDirection.rtl),
+                        title: Text('الفترة: ${ins.start} إلى ${ins.end}', textDirection: Directionality.of(context)),
                         subtitle: Text('الفاقد: ${Utils.n(ins.loss)} kWh (${ins.lossPercent.toStringAsFixed(2)}%)'),
                         trailing: Chip(label: Text(Utils.riskName(ins.lossPercent), style: const TextStyle(fontSize: 10, color: Colors.white)), backgroundColor: color),
                         children: [
